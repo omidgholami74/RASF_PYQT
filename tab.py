@@ -101,7 +101,7 @@ class SubTabButton(QPushButton):
                 background-color: #eeeeee;
             }}
         """)
-
+        
 class MainTabContent(QWidget):
     def __init__(self, tab_info, parent=None):
         super().__init__(parent)
@@ -191,8 +191,10 @@ class MainTabContent(QWidget):
                 subtab_layout.addWidget(btn)
                 subtab_buttons[name] = btn
                 
-                # Create subtab content
-                if isinstance(content, str):
+                # Handle subtab content
+                if callable(content):  # Store functions without adding to layout
+                    subtab_widgets[name] = content
+                elif isinstance(content, str):  # Create label for string content
                     frame = QWidget()
                     frame_layout = QVBoxLayout()
                     frame_layout.setContentsMargins(25, 25, 25, 25)
@@ -201,15 +203,17 @@ class MainTabContent(QWidget):
                     label.setStyleSheet("font: 18px 'Segoe UI'; color: black;")
                     frame_layout.addWidget(label)
                     frame.setLayout(frame_layout)
-                else:
-                    frame = content  # Use the provided widget (e.g., ElementsTab)
-                subtab_widgets[name] = frame
-                subtab_content_layout.addWidget(frame)
-                frame.hide()
+                    subtab_widgets[name] = frame
+                    subtab_content_layout.addWidget(frame)
+                    frame.hide()
+                else:  # Assume QWidget
+                    subtab_widgets[name] = content
+                    subtab_content_layout.addWidget(content)
+                    content.hide()
                 
             self.tab_subtab_map[t_name] = {
                 "buttons": subtab_buttons,
-                "widgets": subtab_widgets,
+                "widgets": subtab_widgets,  # Stores functions or widgets
                 "content": subtab_content,
                 "current_subtab": None
             }
@@ -230,11 +234,24 @@ class MainTabContent(QWidget):
         subtab_widgets = self.tab_subtab_map[tab_name]["widgets"]
         current_subtab = self.tab_subtab_map[tab_name]["current_subtab"]
         
+        # Deselect current subtab button
         if current_subtab:
-            subtab_widgets[current_subtab].hide()
             subtab_buttons[current_subtab].deselect()
-            
-        subtab_widgets[name].show()
+        
+        # Handle new subtab
+        content = subtab_widgets.get(name)
+        if callable(content):  # Execute function without changing content
+            try:
+                content()  # Call the function
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Failed to execute {name}: {str(e)}")
+        elif isinstance(content, QWidget):  # Show widget
+            # Hide all other widgets in the same tab
+            for other_name, other_content in subtab_widgets.items():
+                if isinstance(other_content, QWidget) and other_name != name:
+                    other_content.hide()
+            content.show()
+        
         subtab_buttons[name].select()
         self.tab_subtab_map[tab_name]["current_subtab"] = name
         
