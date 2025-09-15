@@ -2,7 +2,7 @@ import logging
 import pandas as pd
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, QTreeWidget, QTreeWidgetItem, QGridLayout
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QColor, QBrush
 
 # Setup logging (minimal for performance)
 logger = logging.getLogger(__name__)
@@ -55,21 +55,24 @@ class ElementsTab(QWidget):
         self.wavelength_combo.setFont(QFont("Segoe UI", 14))
         self.wavelength_combo.setStyleSheet("""
             QComboBox {
-                background-color: #dddddd;
+                background-color: #e0e0e0;
                 color: black;
-                border: none;
+                border: 1px solid #aaaaaa;
+                border-radius: 4px;
                 padding: 5px;
             }
             QComboBox:hover {
-                background-color: #cccccc;
+                background-color: #d0d0d0;
             }
             QComboBox::drop-down {
                 border: none;
+                width: 20px;
             }
             QComboBox QAbstractItemView {
-                background-color: #dddddd;
+                background-color: #e0e0e0;
                 color: black;
-                selection-background-color: #cccccc;
+                selection-background-color: #b0b0b0;
+                border: 1px solid #aaaaaa;
             }
         """)
         self.wavelength_combo.setFixedHeight(30)
@@ -93,37 +96,52 @@ class ElementsTab(QWidget):
                 background-color: white;
                 color: black;
                 font: 12px 'Segoe UI';
+                border: 1px solid #cccccc;
+                border-radius: 4px;
+                gridline-color: #dddddd;
             }
             QTreeWidget::item {
-                height: 25px;
+                height: 28px;
+                padding: 2px;
+                border-bottom: 1px solid #dddddd;
+                border-right: 1px solid #dddddd;
             }
             QTreeWidget::item:selected {
-                background-color: #cccccc;
+                background-color: #b0c4de;
                 color: black;
             }
-            QHeaderView::section {
+            QTreeWidget::item:hover {
                 background-color: #f0f0f0;
+            }
+            QHeaderView::section {
+                background-color: #e0e0e0;
                 color: black;
                 font: bold 12px 'Segoe UI';
-                padding: 5px;
+                padding: 6px;
                 border: none;
+                border-bottom: 1px solid #cccccc;
+                border-right: 1px solid #cccccc;
+            }
+            QHeaderView::section:hover {
+                background-color: #d0d0d0;
             }
         """)
         self.details_tree.setRootIsDecorated(False)
         self.details_tree.setSortingEnabled(True)
+        self.details_tree.setAlternatingRowColors(True)  # Enable zebra striping
         self.details_tree.header().setSectionsClickable(True)
 
         # Configure columns
         columns = [
-            ("Solution Label", 150),
-            ("Element", 100),
-            ("Soln Conc", 100),
-            ("Wavelength", 100)
+            ("Solution Label", 200),
+            ("Element", 120),
+            ("Soln Conc", 120),
+            ("Wavelength", 120)
         ]
         for col, width in columns:
             col_index = columns.index((col, width))
             self.details_tree.header().resizeSection(col_index, width)
-            self.details_tree.header().setSectionResizeMode(col_index, self.details_tree.header().ResizeMode.Fixed)
+            self.details_tree.header().setSectionResizeMode(col_index, self.details_tree.header().ResizeMode.Interactive)
 
         # Add scrollbars
         self.details_tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -147,13 +165,17 @@ class ElementsTab(QWidget):
             btn.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
             btn.setStyleSheet("""
                 QPushButton {
-                    background-color: #dddddd;
+                    background-color: #e0e0e0;
                     color: black;
-                    border: none;
+                    border: 1px solid #aaaaaa;
+                    border-radius: 4px;
                     padding: 5px;
                 }
                 QPushButton:hover {
-                    background-color: #cccccc;
+                    background-color: #d0d0d0;
+                }
+                QPushButton:pressed {
+                    background-color: #b0b0b0;
                 }
             """)
             btn.clicked.connect(lambda checked, el=element: self.show_element_details(el))
@@ -187,6 +209,7 @@ class ElementsTab(QWidget):
             logger.error("No valid DataFrame available")
             self.details_tree.clear()
             item = QTreeWidgetItem(["No data available", element, "", ""])
+            item.setForeground(0, QBrush(QColor("red")))
             self.details_tree.addTopLevelItem(item)
             return
 
@@ -199,13 +222,15 @@ class ElementsTab(QWidget):
         except Exception as e:
             logger.error(f"Error filtering STD data: {str(e)}")
             item = QTreeWidgetItem([f"Error: {str(e)}", element, "", ""])
+            item.setForeground(0, QBrush(QColor("red")))
             self.details_tree.addTopLevelItem(item)
             return
 
         if std_data.empty:
             item = QTreeWidgetItem(["No STD data found", element, "", ""])
+            item.setForeground(0, QBrush(QColor("gray")))
             self.details_tree.addTopLevelItem(item)
-            self.wavelength_combo.blockSignals(True)  # Block signals to prevent recursion
+            self.wavelength_combo.blockSignals(True)  # Prevent recursion
             self.wavelength_combo.clear()
             self.wavelength_combo.addItem("All Wavelengths")
             self.wavelength_combo.blockSignals(False)
@@ -218,8 +243,8 @@ class ElementsTab(QWidget):
                 logger.error(f"Error extracting wavelengths: {str(e)}")
                 wavelengths = []
 
-            # Update dropdown menu (block signals to prevent recursion)
-            self.wavelength_combo.blockSignals(True)
+            # Update dropdown menu
+            self.wavelength_combo.blockSignals(True)  # Prevent recursion
             self.wavelength_combo.clear()
             self.wavelength_combo.addItems(["All Wavelengths"] + sorted(wavelengths))
             self.wavelength_combo.setCurrentText("All Wavelengths")
@@ -235,10 +260,17 @@ class ElementsTab(QWidget):
                         row.get('Element', '').replace(element + ' ', '') if row.get('Element', '').startswith(element + ' ') else row.get('Wavelength', '')
                     ]) for _, row in std_data.iterrows()
                 ]
+                for i, item in enumerate(items):
+                    if i % 2 == 0:  # Enhance alternating colors
+                        item.setBackground(0, QBrush(QColor("#f8f8f8")))
+                        item.setBackground(1, QBrush(QColor("#f8f8f8")))
+                        item.setBackground(2, QBrush(QColor("#f8f8f8")))
+                        item.setBackground(3, QBrush(QColor("#f8f8f8")))
                 self.details_tree.addTopLevelItems(items)
             except Exception as e:
                 logger.error(f"Error populating tree: {str(e)}")
                 item = QTreeWidgetItem([f"Error: {str(e)}", element, "", ""])
+                item.setForeground(0, QBrush(QColor("red")))
                 self.details_tree.addTopLevelItem(item)
 
     def filter_by_wavelength(self, selected_wavelength):
@@ -255,6 +287,7 @@ class ElementsTab(QWidget):
             logger.error("No valid DataFrame available")
             self.details_tree.clear()
             item = QTreeWidgetItem(["No data available", self.current_element, "", selected_wavelength])
+            item.setForeground(0, QBrush(QColor("red")))
             self.details_tree.addTopLevelItem(item)
             return
 
@@ -271,11 +304,13 @@ class ElementsTab(QWidget):
         except Exception as e:
             logger.error(f"Error filtering data: {str(e)}")
             item = QTreeWidgetItem([f"Error: {str(e)}", self.current_element, "", selected_wavelength])
+            item.setForeground(0, QBrush(QColor("red")))
             self.details_tree.addTopLevelItem(item)
             return
 
         if std_data.empty:
             item = QTreeWidgetItem([f"No data for {selected_wavelength}", self.current_element, "", selected_wavelength])
+            item.setForeground(0, QBrush(QColor("gray")))
             self.details_tree.addTopLevelItem(item)
         else:
             try:
@@ -287,10 +322,17 @@ class ElementsTab(QWidget):
                         selected_wavelength
                     ]) for _, row in std_data.iterrows()
                 ]
+                for i, item in enumerate(items):
+                    if i % 2 == 0:
+                        item.setBackground(0, QBrush(QColor("#f8f8f8")))
+                        item.setBackground(1, QBrush(QColor("#f8f8f8")))
+                        item.setBackground(2, QBrush(QColor("#f8f8f8")))
+                        item.setBackground(3, QBrush(QColor("#f8f8f8")))
                 self.details_tree.addTopLevelItems(items)
             except Exception as e:
                 logger.error(f"Error populating tree: {str(e)}")
                 item = QTreeWidgetItem([f"Error: {str(e)}", self.current_element, "", selected_wavelength])
+                item.setForeground(0, QBrush(QColor("red")))
                 self.details_tree.addTopLevelItem(item)
 
     def process_blk_elements(self):
