@@ -1,38 +1,39 @@
-import sys
+import logging
+import pandas as pd
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, QTreeWidget, QTreeWidgetItem, QGridLayout
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
-import logging
 
-# Setup logging
+# Setup logging (minimal for performance)
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 class ElementsTab(QWidget):
     def __init__(self, app, parent=None):
         super().__init__(parent)
         self.app = app
         self.current_element = None
-        self.filtered_elements = []  # Initialize filtered_elements
+        self.filtered_elements = []
+        self.df_cache = None  # Cache for DataFrame
         self.setup_ui()
-    
+
     def setup_ui(self):
         """Setup the Elements tab UI with ribbon-style aesthetics"""
-        # Main layout for elements tab content
         elements_layout = QVBoxLayout()
         elements_layout.setContentsMargins(10, 10, 10, 10)
         elements_layout.setSpacing(10)
         self.setLayout(elements_layout)
         self.setStyleSheet("background-color: white;")
-        
+
         # Container for element buttons
         self.elements_container = QWidget(self)
-        self.elements_grid_layout = QGridLayout()  # Use QGridLayout instead of QHBoxLayout
+        self.elements_grid_layout = QGridLayout()
         self.elements_grid_layout.setContentsMargins(10, 10, 10, 10)
         self.elements_grid_layout.setSpacing(10)
         self.elements_container.setLayout(self.elements_grid_layout)
         self.elements_container.setStyleSheet("background-color: white;")
         elements_layout.addWidget(self.elements_container)
-        
+
         # Filter frame for wavelength selection
         self.filter_frame = QWidget(self)
         filter_layout = QHBoxLayout()
@@ -42,13 +43,13 @@ class ElementsTab(QWidget):
         self.filter_frame.setLayout(filter_layout)
         self.filter_frame.setStyleSheet("background-color: white;")
         elements_layout.addWidget(self.filter_frame)
-        
+
         # Wavelength filter dropdown
         filter_label = QLabel("Filter by Wavelength:", self.filter_frame)
         filter_label.setFont(QFont("Segoe UI", 14))
         filter_label.setStyleSheet("color: black;")
         filter_layout.addWidget(filter_label)
-        
+
         self.wavelength_combo = QComboBox(self.filter_frame)
         self.wavelength_combo.addItem("All Wavelengths")
         self.wavelength_combo.setFont(QFont("Segoe UI", 14))
@@ -74,7 +75,7 @@ class ElementsTab(QWidget):
         self.wavelength_combo.setFixedHeight(30)
         self.wavelength_combo.currentTextChanged.connect(self.filter_by_wavelength)
         filter_layout.addWidget(self.wavelength_combo)
-        
+
         # Details frame with TreeWidget for element data
         self.details_frame = QWidget(self)
         details_layout = QVBoxLayout()
@@ -83,7 +84,7 @@ class ElementsTab(QWidget):
         self.details_frame.setLayout(details_layout)
         self.details_frame.setStyleSheet("background-color: white;")
         elements_layout.addWidget(self.details_frame, 1)
-        
+
         # TreeWidget for element details
         self.details_tree = QTreeWidget(self.details_frame)
         self.details_tree.setHeaderLabels(["Solution Label", "Element", "Soln Conc", "Wavelength"])
@@ -111,7 +112,7 @@ class ElementsTab(QWidget):
         self.details_tree.setRootIsDecorated(False)
         self.details_tree.setSortingEnabled(True)
         self.details_tree.header().setSectionsClickable(True)
-        
+
         # Configure columns
         columns = [
             ("Solution Label", 150),
@@ -119,34 +120,28 @@ class ElementsTab(QWidget):
             ("Soln Conc", 100),
             ("Wavelength", 100)
         ]
-        
         for col, width in columns:
             col_index = columns.index((col, width))
             self.details_tree.header().resizeSection(col_index, width)
             self.details_tree.header().setSectionResizeMode(col_index, self.details_tree.header().ResizeMode.Fixed)
-        
+
         # Add scrollbars
         self.details_tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.details_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        
         details_layout.addWidget(self.details_tree)
-        
-        # Ensure the frame expands
         elements_layout.setStretch(2, 1)
-    
+
     def display_elements(self, elements):
         """Display element buttons in the container"""
-        # Clear existing widgets without replacing the layout
         for i in reversed(range(self.elements_grid_layout.count())):
             item = self.elements_grid_layout.itemAt(i)
             if item.widget():
                 item.widget().deleteLater()
-        
+
         num_columns = 12
         for i, element in enumerate(elements):
             row = i // num_columns
             col = i % num_columns
-            
             btn = QPushButton(element, self.elements_container)
             btn.setFixedSize(80, 30)
             btn.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
@@ -163,99 +158,179 @@ class ElementsTab(QWidget):
             """)
             btn.clicked.connect(lambda checked, el=element: self.show_element_details(el))
             self.elements_grid_layout.addWidget(btn, row, col)
-            
-            self.elements_grid_layout.setColumnStretch(col, 1)
-            self.elements_grid_layout.setRowStretch(row, 1)
-    
+
+    def clean_dataframe(self, df):
+        """Clean DataFrame to ensure valid data"""
+        if df is None or not isinstance(df, pd.DataFrame):
+            logger.error("Invalid DataFrame provided")
+            return None
+        try:
+            # Select only required columns
+            df = df[['Type', 'Element', 'Solution Label', 'Soln Conc']].copy()
+            # Remove NaN values and convert to string
+            df = df.dropna(subset=['Type', 'Element'])
+            df['Type'] = df['Type'].astype(str).str.strip()
+            df['Element'] = df['Element'].astype(str).str.strip()
+            return df
+        except Exception as e:
+            logger.error(f"Error cleaning DataFrame: {str(e)}")
+            return None
+
     def show_element_details(self, element):
         """Show details for the selected element"""
         self.current_element = element
-        df = self.app.get_data()
+        if self.df_cache is None:
+            self.df_cache = self.clean_dataframe(self.app.get_data())
+        df = self.df_cache
+
         if df is None:
+            logger.error("No valid DataFrame available")
+            self.details_tree.clear()
+            item = QTreeWidgetItem(["No data available", element, "", ""])
+            self.details_tree.addTopLevelItem(item)
             return
-            
+
+        # Clear previous details
         self.details_tree.clear()
-        
-        std_data = df[(df['Type'] == 'Std') & (df['Element'].str.startswith(element + ' '))]
-        
+
+        # Get STD data for the element
+        try:
+            std_data = df[(df['Type'] == 'Std') & (df['Element'].str.startswith(element + ' '))]
+        except Exception as e:
+            logger.error(f"Error filtering STD data: {str(e)}")
+            item = QTreeWidgetItem([f"Error: {str(e)}", element, "", ""])
+            self.details_tree.addTopLevelItem(item)
+            return
+
         if std_data.empty:
             item = QTreeWidgetItem(["No STD data found", element, "", ""])
             self.details_tree.addTopLevelItem(item)
+            self.wavelength_combo.blockSignals(True)  # Block signals to prevent recursion
             self.wavelength_combo.clear()
             self.wavelength_combo.addItem("All Wavelengths")
+            self.wavelength_combo.blockSignals(False)
         else:
-            wavelengths = std_data['Element'].str.replace(element + ' ', '').unique()
-            wavelengths = [w for w in wavelengths if w]
-            
+            # Extract unique wavelengths
+            try:
+                wavelengths = std_data['Element'].str.replace(element + ' ', '', regex=False).unique()
+                wavelengths = [w for w in wavelengths if w]
+            except Exception as e:
+                logger.error(f"Error extracting wavelengths: {str(e)}")
+                wavelengths = []
+
+            # Update dropdown menu (block signals to prevent recursion)
+            self.wavelength_combo.blockSignals(True)
             self.wavelength_combo.clear()
             self.wavelength_combo.addItems(["All Wavelengths"] + sorted(wavelengths))
             self.wavelength_combo.setCurrentText("All Wavelengths")
-            
-            for _, row in std_data.iterrows():
-                element_full = row.get('Element', '')
-                wavelength = element_full.replace(element + ' ', '') if element_full.startswith(element + ' ') else row.get('Wavelength', '')
-                item = QTreeWidgetItem([
-                    str(row.get('Solution Label', '')),
-                    element,
-                    str(row.get('Soln Conc', '')),
-                    wavelength
-                ])
+            self.wavelength_combo.blockSignals(False)
+
+            # Show all data
+            try:
+                items = [
+                    QTreeWidgetItem([
+                        str(row.get('Solution Label', '')),
+                        element,
+                        str(row.get('Soln Conc', '')),
+                        row.get('Element', '').replace(element + ' ', '') if row.get('Element', '').startswith(element + ' ') else row.get('Wavelength', '')
+                    ]) for _, row in std_data.iterrows()
+                ]
+                self.details_tree.addTopLevelItems(items)
+            except Exception as e:
+                logger.error(f"Error populating tree: {str(e)}")
+                item = QTreeWidgetItem([f"Error: {str(e)}", element, "", ""])
                 self.details_tree.addTopLevelItem(item)
-    
+
     def filter_by_wavelength(self, selected_wavelength):
         """Filter data by selected wavelength"""
         if not self.current_element or selected_wavelength == "All Wavelengths":
             self.show_element_details(self.current_element)
             return
-            
-        df = self.app.get_data()
+
+        if self.df_cache is None:
+            self.df_cache = self.clean_dataframe(self.app.get_data())
+        df = self.df_cache
+
         if df is None:
+            logger.error("No valid DataFrame available")
+            self.details_tree.clear()
+            item = QTreeWidgetItem(["No data available", self.current_element, "", selected_wavelength])
+            self.details_tree.addTopLevelItem(item)
             return
-            
+
+        # Clear previous details
         self.details_tree.clear()
-        
-        element_with_wavelength = f"{self.current_element} {selected_wavelength}"
-        std_data = df[(df['Type'] == 'Std') & (df['Element'] == element_with_wavelength)]
-        
+
+        # Get STD data for the element and specific wavelength
+        element_with_wavelength = f"{self.current_element} {selected_wavelength}".strip()
+        try:
+            # Step-by-step filtering to avoid recursion error
+            type_mask = df['Type'] == 'Std'
+            element_mask = df['Element'] == element_with_wavelength
+            std_data = df[type_mask & element_mask]
+        except Exception as e:
+            logger.error(f"Error filtering data: {str(e)}")
+            item = QTreeWidgetItem([f"Error: {str(e)}", self.current_element, "", selected_wavelength])
+            self.details_tree.addTopLevelItem(item)
+            return
+
         if std_data.empty:
             item = QTreeWidgetItem([f"No data for {selected_wavelength}", self.current_element, "", selected_wavelength])
             self.details_tree.addTopLevelItem(item)
         else:
-            for _, row in std_data.iterrows():
-                item = QTreeWidgetItem([
-                    str(row.get('Solution Label', '')),
-                    self.current_element,
-                    str(row.get('Soln Conc', '')),
-                    selected_wavelength
-                ])
+            try:
+                items = [
+                    QTreeWidgetItem([
+                        str(row.get('Solution Label', '')),
+                        self.current_element,
+                        str(row.get('Soln Conc', '')),
+                        selected_wavelength
+                    ]) for _, row in std_data.iterrows()
+                ]
+                self.details_tree.addTopLevelItems(items)
+            except Exception as e:
+                logger.error(f"Error populating tree: {str(e)}")
+                item = QTreeWidgetItem([f"Error: {str(e)}", self.current_element, "", selected_wavelength])
                 self.details_tree.addTopLevelItem(item)
-    
+
     def process_blk_elements(self):
         """Process BLK data and display unique elements"""
-        logger.debug("Processing BLK elements")
-        df = self.app.get_data()
+        logger.info("Processing BLK elements")
+        self.df_cache = self.clean_dataframe(self.app.get_data())
+        df = self.df_cache
+
         if df is None:
-            logger.debug("No data available in process_blk_elements")
-            self.display_elements(["Cu", "Zn", "Fe"])  # Fallback elements
+            logger.info("No valid data available in process_blk_elements")
+            self.display_elements(["Cu", "Zn", "Fe"])
             return
-        
+
         # Filter BLK data
-        if 'Type' in df.columns:
-            blk_data = df[df['Type'] == 'Blk']
-        else:
-            blk_data = df[df['Solution Label'].str.contains("BLANK", case=False, na=False)]
-        
+        try:
+            if 'Type' in df.columns:
+                blk_data = df[df['Type'] == 'Blk']
+            else:
+                blk_data = df[df['Solution Label'].str.contains("BLANK", case=False, na=False)]
+        except Exception as e:
+            logger.error(f"Error filtering BLK data: {str(e)}")
+            self.display_elements(["Cu", "Zn", "Fe"])
+            return
+
         # Extract unique element names
         self.filtered_elements = []
-        for element in blk_data['Element'].unique():
-            element_name = str(element).split()[0]  # Get base element name (e.g., 'Cu' from 'Cu 324.754')
-            if element_name and element_name not in self.filtered_elements:
-                self.filtered_elements.append(element_name)
-        
+        try:
+            for element in blk_data['Element'].unique():
+                element_name = element.split()[0]
+                if element_name and element_name not in self.filtered_elements:
+                    self.filtered_elements.append(element_name)
+        except Exception as e:
+            logger.error(f"Error extracting elements: {str(e)}")
+            self.display_elements(["Cu", "Zn", "Fe"])
+            return
+
         # Display elements
         if self.filtered_elements:
-            logger.debug(f"Displaying filtered elements: {self.filtered_elements}")
+            logger.info(f"Displaying filtered elements: {self.filtered_elements}")
             self.display_elements(self.filtered_elements)
         else:
-            logger.debug("No BLK elements found, displaying default elements")
-            self.display_elements(["Cu", "Zn", "Fe"])  # Fallback if no BLK elements
+            logger.info("No BLK elements found, displaying default elements")
+            self.display_elements(["Cu", "Zn", "Fe"])
