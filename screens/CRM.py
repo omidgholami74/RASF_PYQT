@@ -4,9 +4,9 @@ import platform
 import pandas as pd
 import sqlite3
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, QTableView, 
-                             QFrame, QScrollArea, QGridLayout, QDialog, QMessageBox, QHeaderView, QAbstractScrollArea,
-                             QLineEdit, QCheckBox,QScrollBar)
-from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QTimer, QSortFilterProxyModel
+                             QFrame, QScrollArea, QGridLayout, QDialog, QMessageBox, QHeaderView,
+                             QLineEdit, QCheckBox, QScrollBar)
+from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QSortFilterProxyModel
 from PyQt6.QtGui import QFont, QStandardItemModel, QStandardItem, QColor, QPalette
 from openpyxl import load_workbook
 import logging
@@ -82,9 +82,6 @@ class CRMTab(QWidget):
         self.column_widths = {}
         self.sort_column = None
         self.sort_reverse = False
-        self.displayed_rows = 0
-        self.batch_size = 30
-        self.batch_timer = None
         self.ui_initialized = False
         self.setup_ui()
         self.init_db()
@@ -299,26 +296,19 @@ class CRMTab(QWidget):
                 self._set_status_table("Missing required columns")
                 return
 
-            df_filtered = df.copy()
-            df_filtered['original_index'] = df_filtered.index
-            df_filtered['unique_id'] = df_filtered.groupby(['CRM ID', 'Element']).cumcount()
+            # Aggregate to avoid duplicates: take the first Sort Grade for each CRM ID and Element
+            aggregated_df = df.groupby(['CRM ID', 'Element'])['Sort Grade'].first().reset_index()
 
+            # Now pivot without unique_id
             pivot_df = pd.pivot_table(
-                df_filtered,
-                index=['CRM ID', 'unique_id'],
+                aggregated_df,
+                index='CRM ID',
                 columns='Element',
                 values='Sort Grade',
-                aggfunc='first'
+                aggfunc='first'  # Or 'mean' if you prefer averaging numeric values
             ).reset_index()
 
-            pivot_df = pivot_df.merge(
-                df_filtered[['original_index', 'CRM ID', 'unique_id']],
-                on=['CRM ID', 'unique_id'],
-                how='left'
-            ).sort_values('original_index').drop(columns=['original_index', 'unique_id'])
-
             self.pivot_data = pivot_df
-            columns = list(pivot_df.columns)
             model = CRMTableModel(self, pivot_df, decimal_places=int(self.decimal_places.currentText()))
             self.table_view.setModel(model)
             
@@ -576,7 +566,6 @@ class CRMTab(QWidget):
         self.column_widths = {}
         self.search_var.clear()
         self.filter_var.setCurrentText("All")
-        self.displayed_rows = 0
         self.ui_initialized = False
 
     def __del__(self):
