@@ -1,6 +1,8 @@
 from PyQt6.QtWidgets import (QWidget, QFrame, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QLabel, QTableView, QHeaderView, QMessageBox)
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QStandardItemModel, QStandardItem
+from PyQt6.QtCharts import QChart, QChartView, QLineSeries, QScatterSeries, QValueAxis, QCategoryAxis
+from PyQt6.QtGui import QPainter
 import pandas as pd
 import numpy as np
 import json
@@ -907,15 +909,131 @@ class CheckRMFrame(QWidget):
         self.display_between_df(between_df)
 
     def plot_trend(self, element):
-        """Placeholder for plotting trend."""
+        """Plot trend for the specified element in the current label."""
         if self.current_label is None:
             QMessageBox.critical(self, "Error", "No label selected.")
             return
 
-        # Clear existing plot
-        for widget in self.plot_frame.findChildren(QWidget):
-            widget.deleteLater()
+        def render_plot():
+            # Clear existing plot
+            for widget in self.plot_frame.findChildren(QWidget):
+                widget.deleteLater()
 
-        placeholder_label = QLabel(f"Trend Plot for {element} (Not Implemented)")
-        placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.plot_layout.addWidget(placeholder_label)
+            # Filter data for the current label
+            label_df = self.rm_df[self.rm_df['Solution Label'] == self.current_label].sort_values('row_id')
+            if label_df.empty:
+                QMessageBox.critical(self, "Error", f"No data found for {self.current_label}.")
+                return
+
+            # Extract row IDs and values
+            sample_index = np.array(label_df['row_id'])
+            values = pd.to_numeric(label_df[element], errors='coerce').values
+            valid_mask = ~np.isnan(values)
+            if np.sum(valid_mask) < 2:
+                QMessageBox.information(self, "Info", f"Insufficient valid data for {element} in {self.current_label}.")
+                return
+
+            valid_sample_index = sample_index[valid_mask]
+            valid_values = values[valid_mask]
+
+            # Identify outliers
+            user_key = f"{self.current_label}:{element}"
+            user_outliers = set(self.user_corrections.get(user_key, {}).get('outliers', []))
+            user_non_outliers = set(self.user_corrections.get(user_key, {}).get('non_outliers', []))
+            ignored_outliers = set(self.ignored_outliers.get(self.current_label, set()))
+
+            coefficients = np.polyfit(valid_sample_index, valid_values, 1)
+            trendline = np.polyval(coefficients, valid_sample_index)
+            residuals = valid_values - trendline
+            residual_std = np.std(residuals) if len(residuals) > 0 else 1.0
+            try:
+                threshold_sigma = float(self.threshold_entry.text())
+            except ValueError:
+                threshold_sigma = 2.0
+            outlier_mask = np.abs(residuals) > threshold_sigma * residual_std
+            outlier_mask |= np.isin(valid_sample_index, list(user_outliers))
+            outlier_mask &= ~np.isin(valid_sample_index, list(user_non_outliers))
+            outlier_mask |= np.isin(valid_sample_index, list(ignored_outliers))
+
+            non_outlier_mask = ~outlier_mask
+            valid_sample_index_no_outliers = valid_sample_index[non_outlier_mask]
+            valid_values_no_outliers = valid_values[non_outlier_mask]
+
+            if len(valid_values_no_outliers) < 1:
+                QMessageBox.information(self, "Info", f"No non-outlier data available for {element} in {self.current_label}.")
+                return
+
+            # Calculate trendlines
+            coefficients_before = np.polyfit(valid_sample_index, valid_values, 1)
+            trendline_before = np.polyval(coefficients_before, valid_sample_index)
+            coefficients_after = np.polyfit(valid_sample_index_no_outliers, valid_values_no_outliers, 1) if len(valid_values_no_outliers) >= 2 else coefficients_before
+            trendline_after = np.polyval(coefficients_after, valid_sample_index)
+
+            # Create chart
+            chart = QChart()
+            chart.setTitle(f"Trend for {element} ({self.current_label})")
+
+            # Plot all points (before correction)
+            before_series = QLineSeries()
+            before_series.setName(f"{element}")
+            for i, val in enumerate(valid_values[non_outlier_mask]):
+                before_series.append(valid_sample_index[non_outlier_mask][i], val)
+
+            # Plot outliers
+            outlier_series = QScatterSeries()
+            outlier_series.setName("Outliers")
+            outlier_series.setMarkerSize(8)
+            for i, val in enumerate(valid_values[outlier_mask]):
+                outlier_series.append(valid_sample_index[outlier_mask][i], val)
+
+            # Plot trendline before correction
+            trendline_before_series = QLineSeries()
+            trendline_before_series.setName(f"Trendline (slope={coefficients_before[0]:.3f})")
+            for i, val in enumerate(trendline_before):
+                trendline_before_series.append(valid_sample_index[i], val)
+
+            # Plot non-outlier points (after correction)
+            after_series = QLineSeries()
+            after_series.setName(f"{element} (No Outliers)")
+            for i, val in enumerate(valid_values_no_outliers):
+                after_series.append(valid_sample_index_no_outliers[i], val)
+
+            # Plot trendline after correction
+            trendline_after_series = QLineSeries()
+            trendline_after_series.setName(f"Trendline (slope={coefficients_after[0]:.3f})")
+            for i, val in enumerate(trendline_after):
+                trendline_after_series.append(valid_sample_index[i], val)
+
+            # Add series to chart
+            chart.addSeries(before_series)
+            chart.addSeries(outlier_series)
+            chart.addSeries(trendline_before_series)
+            chart.addSeries(after_series)
+            chart.addSeries(trendline_after_series)
+
+            # Configure axes
+            axis_x = QCategoryAxis()
+            axis_x.setTitleText("Row ID")
+            for idx in valid_sample_index:
+                axis_x.append(f"{self.current_label}-{idx}", idx)
+            axis_x.setLabelsAngle(45)
+
+            axis_y = QValueAxis()
+            axis_y.setTitleText(element)
+            y_min = np.min(valid_values) - 0.1 * (np.max(valid_values) - np.min(valid_values))
+            y_max = np.max(valid_values) + 0.1 * (np.max(valid_values) - np.min(valid_values))
+            axis_y.setRange(y_min, y_max)
+
+            chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
+            chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
+            for series in [before_series, outlier_series, trendline_before_series, after_series, trendline_after_series]:
+                series.attachAxis(axis_x)
+                series.attachAxis(axis_y)
+
+            # Create and add chart view
+            chart_view = QChartView(chart)
+            chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
+            self.plot_layout.addWidget(chart_view)
+
+        # Render plot asynchronously to avoid UI freeze
+        QTimer.singleShot(0, render_plot)
