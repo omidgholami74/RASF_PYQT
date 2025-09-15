@@ -1,6 +1,8 @@
 import sys
-from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
+import pandas as pd
+from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QComboBox, QTreeWidget, QTreeWidgetItem
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont
 
 
 class MainWindow(QMainWindow):
@@ -8,6 +10,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Office-style Tabs UI")
         self.setGeometry(100, 100, 900, 600)
+        
+        # Placeholder get_data method
+        self.data = None  # Replace with actual DataFrame if needed
         
         # Tab definitions
         tab_info = {
@@ -22,7 +27,7 @@ class MainWindow(QMainWindow):
                 "Chart": "Insert -> Chart Content"
             },
             "View": {
-                "Zoom": "View -> Zoom Content",
+                "Zoom": ElementsTab(self, self),  # Pass MainWindow as app and parent
                 "Layout": "View -> Layout Content"
             }
         }
@@ -30,6 +35,11 @@ class MainWindow(QMainWindow):
         # Create MainTabContent with tab_info
         self.main_content = MainTabContent(tab_info)
         self.setCentralWidget(self.main_content)
+    
+    def get_data(self):
+        """Placeholder method to return a pandas DataFrame"""
+        # Replace with actual implementation
+        return self.data
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

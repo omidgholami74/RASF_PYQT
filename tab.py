@@ -1,6 +1,8 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
 from PyQt6.QtCore import Qt
 # Color definitions for tabs
+
+
 TAB_COLORS = {
     "File": {"bg": "#fdf6e3", "indicator": "#b58900"},
     "Insert": {"bg": "#eee8f4", "indicator": "#6a5acd"},
@@ -20,7 +22,7 @@ class RibbonTabButton(QPushButton):
                 font: bold 14px 'Segoe UI';
                 border: none;
                 padding: 5px;
-                text-align: center;
+                text-align: left;
             }}
             QPushButton:hover {{
                 background-color: #dddddd;
@@ -35,7 +37,7 @@ class RibbonTabButton(QPushButton):
                 font: bold 14px 'Segoe UI';
                 border: none;
                 padding: 5px;
-                text-align: center;
+                text-align: left;
             }}
         """)
         
@@ -47,7 +49,7 @@ class RibbonTabButton(QPushButton):
                 font: bold 14px 'Segoe UI';
                 border: none;
                 padding: 5px;
-                text-align: center;
+                text-align: left;
             }}
             QPushButton:hover {{
                 background-color: #dddddd;
@@ -66,7 +68,7 @@ class SubTabButton(QPushButton):
                 font: 14px 'Segoe UI';
                 border: none;
                 padding: 5px;
-                text-align: center;
+                text-align: left;
             }}
             QPushButton:hover {{
                 background-color: #eeeeee;
@@ -81,7 +83,7 @@ class SubTabButton(QPushButton):
                 font: 14px 'Segoe UI';
                 border: none;
                 padding: 5px;
-                text-align: center;
+                text-align: left;
             }}
         """)
         
@@ -93,7 +95,7 @@ class SubTabButton(QPushButton):
                 font: 14px 'Segoe UI';
                 border: none;
                 padding: 5px;
-                text-align: center;
+                text-align: left;
             }}
             QPushButton:hover {{
                 background-color: #eeeeee;
@@ -104,7 +106,7 @@ class MainTabContent(QWidget):
     def __init__(self, tab_info, parent=None):
         super().__init__(parent)
         self.current_tab = None
-        self.tab_subtab_map = {}  # Map to store subtab buttons, widgets, and content per tab
+        self.tab_subtab_map = {}
 
         # Main layout
         main_layout = QVBoxLayout()
@@ -118,7 +120,7 @@ class MainTabContent(QWidget):
         ribbon_layout = QHBoxLayout()
         ribbon_layout.setContentsMargins(0, 0, 0, 0)
         ribbon_layout.setSpacing(0)
-        ribbon_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)  # Left-align tabs
+        ribbon_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.ribbon.setLayout(ribbon_layout)
         
         # Content frame
@@ -150,8 +152,8 @@ class MainTabContent(QWidget):
             tab_content_layout.setSpacing(0)
             tab_content.setLayout(tab_content_layout)
             self.tabs[t_name] = tab_content
-            content_layout.addWidget(tab_content)  # Add to content frame during init
-            tab_content.hide()  # Hide by default
+            content_layout.addWidget(tab_content)
+            tab_content.hide()
             
             # Subtab bar
             subtab_bar = QWidget()
@@ -160,7 +162,7 @@ class MainTabContent(QWidget):
             subtab_layout = QHBoxLayout()
             subtab_layout.setContentsMargins(8, 6, 8, 6)
             subtab_layout.setSpacing(8)
-            subtab_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)  # Left-align subtabs
+            subtab_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
             subtab_bar.setLayout(subtab_layout)
             
             # Indicator
@@ -183,27 +185,28 @@ class MainTabContent(QWidget):
             subtab_buttons = {}
             subtab_widgets = {}
             
-            for name, content_text in subtabs.items():
-                # Create subtab button
+            for name, content in subtabs.items():
                 btn = SubTabButton(name, text_color="black")
                 btn.clicked.connect(lambda checked, n=name, tn=t_name: self.switch_subtab(n, tn))
                 subtab_layout.addWidget(btn)
                 subtab_buttons[name] = btn
                 
                 # Create subtab content
-                frame = QWidget()
-                frame_layout = QVBoxLayout()
-                frame_layout.setContentsMargins(25, 25, 25, 25)
-                frame_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
-                label = QLabel(content_text)
-                label.setStyleSheet("font: 18px 'Segoe UI'; color: black;")
-                frame_layout.addWidget(label)
-                frame.setLayout(frame_layout)
+                if isinstance(content, str):
+                    frame = QWidget()
+                    frame_layout = QVBoxLayout()
+                    frame_layout.setContentsMargins(25, 25, 25, 25)
+                    frame_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+                    label = QLabel(content)
+                    label.setStyleSheet("font: 18px 'Segoe UI'; color: black;")
+                    frame_layout.addWidget(label)
+                    frame.setLayout(frame_layout)
+                else:
+                    frame = content  # Use the provided widget (e.g., ElementsTab)
                 subtab_widgets[name] = frame
-                subtab_content_layout.addWidget(frame)  # Add to layout during init
-                frame.hide()  # Hide by default
+                subtab_content_layout.addWidget(frame)
+                frame.hide()
                 
-            # Store subtab buttons, widgets, and content for this tab
             self.tab_subtab_map[t_name] = {
                 "buttons": subtab_buttons,
                 "widgets": subtab_widgets,
@@ -211,13 +214,11 @@ class MainTabContent(QWidget):
                 "current_subtab": None
             }
             
-            # Show first subtab for this tab
             if subtabs:
                 self.switch_subtab(list(subtabs.keys())[0], t_name)
         
         self.setLayout(main_layout)
         
-        # Show first tab
         if tab_info:
             self.switch_tab(list(tab_info.keys())[0])
             
