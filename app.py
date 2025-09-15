@@ -1,5 +1,5 @@
 import sys
-from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame,QTabWidget
+from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame, QTabWidget
 from PyQt6.QtCore import Qt
 from tab import MainTabContent, RibbonTabButton, SubTabButton, TAB_COLORS
 from screens.calibration_tab import ElementsTab
@@ -18,35 +18,41 @@ import logging
 
 # Setup logging
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG)  # Set to DEBUG for more detailed logs
 
 class MainWindow(QMainWindow):
+    # Class-level list to track open windows
+    open_windows = []
+
     def __init__(self):
         super().__init__()
+        logger.debug("Creating new MainWindow instance")
         
         # Initialize data and file path
         self.data = None
         self.file_path = None
         self.file_path_label = QLabel("File Path: No file selected")
         
-        # Initialize tabs
+        # Initialize tabs only once
         self.pivot_tab = PivotTab(self, self)
         self.elements_tab = ElementsTab(self, self)
         self.crm_tab = CRMTab(self, self)
         self.results = ResultsFrame(self, self)
-        self.rm_check=CheckRMFrame(self,self)
-        self.weight_check =WeightCheckFrame(self,self)
-        self.volume_check=VolumeCheckFrame(self,self)
-        self.df_check=DFCheckFrame(self,self)
-        self.compare_tab=CompareTab(self,self)
+        self.rm_check = CheckRMFrame(self, self)
+        self.weight_check = WeightCheckFrame(self, self)
+        self.volume_check = VolumeCheckFrame(self, self)
+        self.df_check = DFCheckFrame(self, self)
+        self.compare_tab = CompareTab(self, self)
+        
         # Tab definitions
         tab_info = {
             "File": {
-                "New": "File -> New Content",
-                "Open": self.handle_excel,  # Updated to use handle_excel
-                "Close": "File -> Save Content"
+                "Open": self.handle_excel,
+                 "New": self.new_window,
+                "Close": self.close_window  # Updated to use close_window
             },
-            "Find similarity":{
-                "display":self.compare_tab
+            "Find similarity": {
+                "display": self.compare_tab
             },
             "Elements": {
                 "Display": self.elements_tab,
@@ -65,7 +71,7 @@ class MainWindow(QMainWindow):
             },
             "Process": {
                 "Weight Check": self.weight_check,
-                "Volume Check" : self.volume_check,
+                "Volume Check": self.volume_check,
                 "DF check": self.df_check,
                 "RM check": self.rm_check,
                 "Result": self.results
@@ -76,14 +82,52 @@ class MainWindow(QMainWindow):
         self.main_content = MainTabContent(tab_info)
         self.setCentralWidget(self.main_content)
         self.setWindowTitle("RASF Data Processor")
+        
+        # Add window to open_windows list
+        MainWindow.open_windows.append(self)
+    
+    def new_window(self):
+        """Create and show a new instance of MainWindow"""
+        try:
+            new_window = MainWindow()
+            new_window.show()
+            logger.debug(f"New window created. Total open windows: {len(MainWindow.open_windows)}")
+        except Exception as e:
+            logger.error(f"Error creating new window: {str(e)}")
+
+    def close_window(self):
+        """Close the current window and clean up"""
+        try:
+            self.close()
+            logger.debug(f"Closing window. Total open windows: {len(MainWindow.open_windows)}")
+        except Exception as e:
+            logger.error(f"Error closing window: {str(e)}")
+    
+    def closeEvent(self, event):
+        """Handle window close event to clean up resources"""
+        try:
+            MainWindow.open_windows.remove(self)
+            logger.debug(f"Window closed. Total open windows: {len(MainWindow.open_windows)}")
+            # Ensure CRMTab closes its database connection
+            if hasattr(self.crm_tab, 'close_db_connection'):
+                self.crm_tab.close_db_connection()
+            event.accept()
+        except Exception as e:
+            logger.error(f"Error in closeEvent: {str(e)}")
+            event.accept()
     
     def handle_excel(self):
         """Load Excel/CSV file, store DataFrame, and update window title with file name"""
-        result = load_excel(self)
-        if result:
-            self.data, self.file_path = result
-            file_name = os.path.basename(self.file_path)
-            self.setWindowTitle(f"RASF Data Processor - {file_name}")
+        try:
+            result = load_excel(self)
+            if result:
+                self.data, self.file_path = result
+                file_name = os.path.basename(self.file_path)
+                self.setWindowTitle(f"RASF Data Processor - {file_name}")
+                logger.debug(f"Excel file loaded: {file_name}")
+        except Exception as e:
+            logger.error(f"Error loading Excel file: {str(e)}")
+    
     def set_data(self, df, for_results=False):
         """Set or update the application-wide DataFrame."""
         try:
@@ -95,14 +139,13 @@ class MainWindow(QMainWindow):
             if for_results:
                 self.notify_data_changed()
         except Exception as e:
-            logger.error(f"Error in set_data: {e}")
-
+            logger.error(f"Error in set_data: {str(e)}")
 
     def notify_data_changed(self):
         """Notify all tabs that data has changed."""
         try:
-            for tab_index in range(self.tabs.count()):
-                tab_widget = self.tabs.widget(tab_index)
+            for tab_index in range(self.main_content.tabs.count()):
+                tab_widget = self.main_content.tabs.widget(tab_index)
                 if isinstance(tab_widget, QTabWidget):
                     for sub_tab_index in range(tab_widget.count()):
                         sub_tab_widget = tab_widget.widget(sub_tab_index)
@@ -110,7 +153,7 @@ class MainWindow(QMainWindow):
                             sub_tab_widget.data_changed()
             logger.debug("Notified all tabs of data change")
         except Exception as e:
-            logger.error(f"Error in notify_data_changed: {e}")
+            logger.error(f"Error in notify_data_changed: {str(e)}")
     
     def get_data(self):
         """Return the stored DataFrame"""

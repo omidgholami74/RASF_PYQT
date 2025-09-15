@@ -1,12 +1,16 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QMessageBox
 from PyQt6.QtCore import Qt
+import logging
+
+# Setup logging
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+
 # Color definitions for tabs
-
-
 TAB_COLORS = {
-    "File": {"bg": "#fdf6e3", "indicator": "#b58900"},  # Warm beige bg, amber indicator (unchanged)
+    "File": {"bg": "#fdf6e3", "indicator": "#b58900"},  # Warm beige bg, amber indicator
     "Find similarity": {"bg": "#e6e6fa", "indicator": "#483d8b"},  # Light lavender bg, darker slate blue indicator
-    "Elements": {"bg": "#e8f6f3", "indicator": "#2e8b57"},  # Light teal bg, sea green indicator (unchanged)
+    "Elements": {"bg": "#e8f6f3", "indicator": "#2e8b57"},  # Light teal bg, sea green indicator
     "pivot": {"bg": "#f0e6ff", "indicator": "#7b68ee"},  # Soft purple bg, medium slate blue indicator
     "CRM": {"bg": "#e0f7fa", "indicator": "#008b8b"},  # Light cyan bg, dark cyan indicator
     "Process": {"bg": "#f5e6e8", "indicator": "#c71585"}   # Light pink bg, magenta indicator
@@ -110,6 +114,7 @@ class MainTabContent(QWidget):
         super().__init__(parent)
         self.current_tab = None
         self.tab_subtab_map = {}
+        logger.debug("Initializing MainTabContent")
 
         # Main layout
         main_layout = QVBoxLayout()
@@ -158,79 +163,157 @@ class MainTabContent(QWidget):
             content_layout.addWidget(tab_content)
             tab_content.hide()
             
-            # Subtab bar
-            subtab_bar = QWidget()
-            subtab_bar.setFixedHeight(50)
-            subtab_bar.setStyleSheet(f"background-color: {colors['bg']};")
-            subtab_layout = QHBoxLayout()
-            subtab_layout.setContentsMargins(8, 6, 8, 6)
-            subtab_layout.setSpacing(8)
-            subtab_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
-            subtab_bar.setLayout(subtab_layout)
-            
-            # Indicator
-            indicator = QWidget()
-            indicator.setFixedHeight(3)
-            indicator.setStyleSheet(f"background-color: {colors['indicator']};")
-            
-            # Subtab content area
-            subtab_content = QWidget()
-            subtab_content_layout = QVBoxLayout()
-            subtab_content_layout.setContentsMargins(0, 0, 0, 0)
-            subtab_content_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
-            subtab_content.setLayout(subtab_content_layout)
-            
-            tab_content_layout.addWidget(subtab_bar)
-            tab_content_layout.addWidget(indicator)
-            tab_content_layout.addWidget(subtab_content, 1)
-            
-            # Subtab buttons and content
-            subtab_buttons = {}
-            subtab_widgets = {}
-            
-            for name, content in subtabs.items():
-                btn = SubTabButton(name, text_color="black")
-                btn.clicked.connect(lambda checked, n=name, tn=t_name: self.switch_subtab(n, tn))
-                subtab_layout.addWidget(btn)
-                subtab_buttons[name] = btn
+            # Check if the tab has only one subtab
+            if len(subtabs) == 1:
+                subtab_name, subtab_content = list(subtabs.items())[0]
+                logger.debug(f"Tab {t_name} has single subtab: {subtab_name}")
                 
-                # Handle subtab content
-                if callable(content):  # Store functions without adding to layout
-                    subtab_widgets[name] = content
-                elif isinstance(content, str):  # Create label for string content
+                # If single subtab is a widget, add it directly
+                if isinstance(subtab_content, QWidget):
+                    tab_content_layout.addWidget(subtab_content)
+                    subtab_widgets = {subtab_name: subtab_content}
+                    self.tab_subtab_map[t_name] = {
+                        "buttons": {},  # No buttons for single subtab
+                        "widgets": subtab_widgets,
+                        "content": tab_content,
+                        "current_subtab": subtab_name,
+                        "has_subtab_bar": False  # Indicate no subtab bar
+                    }
+                # If single subtab is a function, create a button to trigger it
+                elif callable(subtab_content):
+                    subtab_bar = QWidget()
+                    subtab_bar.setFixedHeight(50)
+                    subtab_bar.setStyleSheet(f"background-color: {colors['bg']};")
+                    subtab_layout = QHBoxLayout()
+                    subtab_layout.setContentsMargins(8, 6, 8, 6)
+                    subtab_layout.setSpacing(8)
+                    subtab_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+                    subtab_bar.setLayout(subtab_layout)
+                    
+                    btn = SubTabButton(subtab_name, text_color="black")
+                    btn.clicked.connect(subtab_content)  # Connect function directly
+                    subtab_layout.addWidget(btn)
+                    
+                    indicator = QWidget()
+                    indicator.setFixedHeight(3)
+                    indicator.setStyleSheet(f"background-color: {colors['indicator']};")
+                    
+                    subtab_content_area = QWidget()
+                    subtab_content_layout = QVBoxLayout()
+                    subtab_content_layout.setContentsMargins(0, 0, 0, 0)
+                    subtab_content_area.setLayout(subtab_content_layout)
+                    
+                    tab_content_layout.addWidget(subtab_bar)
+                    tab_content_layout.addWidget(indicator)
+                    tab_content_layout.addWidget(subtab_content_area, 1)
+                    
+                    subtab_widgets = {subtab_name: subtab_content}
+                    self.tab_subtab_map[t_name] = {
+                        "buttons": {subtab_name: btn},
+                        "widgets": subtab_widgets,
+                        "content": subtab_content_area,
+                        "current_subtab": subtab_name,
+                        "has_subtab_bar": True
+                    }
+                    btn.select()  # Select the button by default
+                else:  # Handle string content
                     frame = QWidget()
                     frame_layout = QVBoxLayout()
                     frame_layout.setContentsMargins(25, 25, 25, 25)
                     frame_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
-                    label = QLabel(content)
+                    label = QLabel(subtab_content)
                     label.setStyleSheet("font: 18px 'Segoe UI'; color: black;")
                     frame_layout.addWidget(label)
                     frame.setLayout(frame_layout)
-                    subtab_widgets[name] = frame
-                    subtab_content_layout.addWidget(frame)
-                    frame.hide()
-                else:  # Assume QWidget
-                    subtab_widgets[name] = content
-                    subtab_content_layout.addWidget(content)
-                    content.hide()
+                    tab_content_layout.addWidget(frame)
+                    subtab_widgets = {subtab_name: frame}
+                    self.tab_subtab_map[t_name] = {
+                        "buttons": {},
+                        "widgets": subtab_widgets,
+                        "content": tab_content,
+                        "current_subtab": subtab_name,
+                        "has_subtab_bar": False
+                    }
+            else:
+                # Subtab bar for multiple subtabs
+                subtab_bar = QWidget()
+                subtab_bar.setFixedHeight(50)
+                subtab_bar.setStyleSheet(f"background-color: {colors['bg']};")
+                subtab_layout = QHBoxLayout()
+                subtab_layout.setContentsMargins(8, 6, 8, 6)
+                subtab_layout.setSpacing(8)
+                subtab_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+                subtab_bar.setLayout(subtab_layout)
                 
-            self.tab_subtab_map[t_name] = {
-                "buttons": subtab_buttons,
-                "widgets": subtab_widgets,  # Stores functions or widgets
-                "content": subtab_content,
-                "current_subtab": None
-            }
-            
-            if subtabs:
-                self.switch_subtab(list(subtabs.keys())[0], t_name)
+                # Indicator
+                indicator = QWidget()
+                indicator.setFixedHeight(3)
+                indicator.setStyleSheet(f"background-color: {colors['indicator']};")
+                
+                # Subtab content area
+                subtab_content = QWidget()
+                subtab_content_layout = QVBoxLayout()
+                subtab_content_layout.setContentsMargins(0, 0, 0, 0)
+                subtab_content_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+                subtab_content.setLayout(subtab_content_layout)
+                
+                tab_content_layout.addWidget(subtab_bar)
+                tab_content_layout.addWidget(indicator)
+                tab_content_layout.addWidget(subtab_content, 1)
+                
+                # Subtab buttons and content
+                subtab_buttons = {}
+                subtab_widgets = {}
+                
+                for name, content in subtabs.items():
+                    btn = SubTabButton(name, text_color="black")
+                    btn.clicked.connect(lambda checked, n=name, tn=t_name: self.switch_subtab(n, tn))
+                    subtab_layout.addWidget(btn)
+                    subtab_buttons[name] = btn
+                    
+                    if callable(content):
+                        subtab_widgets[name] = content
+                    elif isinstance(content, str):
+                        frame = QWidget()
+                        frame_layout = QVBoxLayout()
+                        frame_layout.setContentsMargins(25, 25, 25, 25)
+                        frame_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+                        label = QLabel(content)
+                        label.setStyleSheet("font: 18px 'Segoe UI'; color: black;")
+                        frame_layout.addWidget(label)
+                        frame.setLayout(frame_layout)
+                        subtab_widgets[name] = frame
+                        subtab_content_layout.addWidget(frame)
+                        frame.hide()
+                    else:
+                        subtab_widgets[name] = content
+                        subtab_content_layout.addWidget(content)
+                        content.hide()
+                
+                self.tab_subtab_map[t_name] = {
+                    "buttons": subtab_buttons,
+                    "widgets": subtab_widgets,
+                    "content": subtab_content,
+                    "current_subtab": None,
+                    "has_subtab_bar": True
+                }
+                
+                # Only switch to first subtab if it's not a callable
+                if subtabs:
+                    first_subtab = list(subtabs.keys())[0]
+                    if not callable(subtabs[first_subtab]):
+                        self.switch_subtab(first_subtab, t_name)
         
         self.setLayout(main_layout)
         
         if tab_info:
-            self.switch_tab(list(tab_info.keys())[0])
-            
+            first_tab = list(tab_info.keys())[0]
+            if not all(callable(content) for content in tab_info[first_tab].values()):
+                self.switch_tab(first_tab)
+    
     def switch_subtab(self, name, tab_name):
         if tab_name not in self.tab_subtab_map:
+            logger.warning(f"Tab {tab_name} not found in tab_subtab_map")
             return
         
         subtab_buttons = self.tab_subtab_map[tab_name]["buttons"]
@@ -238,26 +321,30 @@ class MainTabContent(QWidget):
         current_subtab = self.tab_subtab_map[tab_name]["current_subtab"]
         
         # Deselect current subtab button
-        if current_subtab:
+        if current_subtab and current_subtab in subtab_buttons:
             subtab_buttons[current_subtab].deselect()
         
         # Handle new subtab
         content = subtab_widgets.get(name)
-        if callable(content):  # Execute function without changing content
+        if callable(content):
             try:
+                logger.debug(f"Executing function for subtab {name} in tab {tab_name}")
                 content()  # Call the function
             except Exception as e:
+                logger.error(f"Failed to execute {name}: {str(e)}")
                 QMessageBox.warning(self, "Error", f"Failed to execute {name}: {str(e)}")
-        elif isinstance(content, QWidget):  # Show widget
+        elif isinstance(content, QWidget):
             # Hide all other widgets in the same tab
             for other_name, other_content in subtab_widgets.items():
                 if isinstance(other_content, QWidget) and other_name != name:
                     other_content.hide()
             content.show()
+            logger.debug(f"Switched to subtab {name} in tab {tab_name}")
         
-        subtab_buttons[name].select()
+        if name in subtab_buttons:
+            subtab_buttons[name].select()
         self.tab_subtab_map[tab_name]["current_subtab"] = name
-        
+    
     def switch_tab(self, tab_name):
         if self.current_tab and self.current_tab in self.tabs:
             self.tabs[self.current_tab].hide()
@@ -268,5 +355,13 @@ class MainTabContent(QWidget):
         self.current_tab = tab_name
         
         colors = TAB_COLORS.get(tab_name, {"bg": "white", "indicator": "black"})
-        self.tabs[tab_name].layout().itemAt(0).widget().setStyleSheet(f"background-color: {colors['bg']};")
-        self.tabs[tab_name].layout().itemAt(1).widget().setStyleSheet(f"background-color: {colors['indicator']};")
+        
+        # Check if the tab has a subtab bar and indicator
+        if self.tab_subtab_map[tab_name].get("has_subtab_bar", False):
+            tab_layout = self.tabs[tab_name].layout()
+            if tab_layout.count() > 0 and tab_layout.itemAt(0) and tab_layout.itemAt(0).widget():
+                tab_layout.itemAt(0).widget().setStyleSheet(f"background-color: {colors['bg']};")
+            if tab_layout.count() > 1 and tab_layout.itemAt(1) and tab_layout.itemAt(1).widget():
+                tab_layout.itemAt(1).widget().setStyleSheet(f"background-color: {colors['indicator']};")
+        
+        logger.debug(f"Switched to tab {tab_name}")
