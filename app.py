@@ -8,6 +8,9 @@ from screens.CRM import CRMTab
 from utils.load_file import load_excel
 from screens.process.result import ResultsFrame
 from screens.process.RM_check import CheckRMFrame
+from screens.process.weight_check import WeightCheckFrame
+from screens.process.volume_check import VolumeCheckFrame
+from screens.process.DF_check import DFCheckFrame
 import os
 import pandas as pd
 import logging
@@ -30,6 +33,9 @@ class MainWindow(QMainWindow):
         self.crm_tab = CRMTab(self, self)
         self.results = ResultsFrame(self, self)
         self.rm_check=CheckRMFrame(self,self)
+        self.weight_check =WeightCheckFrame(self,self)
+        self.volume_check=VolumeCheckFrame(self,self)
+        self.df_check=DFCheckFrame(self,self)
         # Tab definitions
         tab_info = {
             "File": {
@@ -53,8 +59,9 @@ class MainWindow(QMainWindow):
                 "CRM": self.crm_tab,
             },
             "Process": {
-                "Weight Check": "File -> New Content",
-                "DF check": "File -> Save Content",
+                "Weight Check": self.weight_check,
+                "Volume Check" : self.volume_check,
+                "DF check": self.df_check,
                 "RM check": self.rm_check,
                 "Result": self.results
             }

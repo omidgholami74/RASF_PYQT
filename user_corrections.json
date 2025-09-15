@@ -4,5 +4,13 @@
             3
         ],
         "non_outliers": []
+    },
+    "RM1:Ag 338.289": {
+        "outliers": [
+            3,
+            5,
+            10
+        ],
+        "non_outliers": []
     }
 }
