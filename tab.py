@@ -4,9 +4,12 @@ from PyQt6.QtCore import Qt
 
 
 TAB_COLORS = {
-    "File": {"bg": "#fdf6e3", "indicator": "#b58900"},
-    "Insert": {"bg": "#eee8f4", "indicator": "#6a5acd"},
-    "View": {"bg": "#e8f6f3", "indicator": "#2e8b57"},
+    "File": {"bg": "#fdf6e3", "indicator": "#b58900"},  # Warm beige bg, amber indicator (unchanged)
+    "Find similarity": {"bg": "#e6e6fa", "indicator": "#483d8b"},  # Light lavender bg, darker slate blue indicator
+    "Elements": {"bg": "#e8f6f3", "indicator": "#2e8b57"},  # Light teal bg, sea green indicator (unchanged)
+    "pivot": {"bg": "#f0e6ff", "indicator": "#7b68ee"},  # Soft purple bg, medium slate blue indicator
+    "CRM": {"bg": "#e0f7fa", "indicator": "#008b8b"},  # Light cyan bg, dark cyan indicator
+    "Process": {"bg": "#f5e6e8", "indicator": "#c71585"}   # Light pink bg, magenta indicator
 }
 
 class RibbonTabButton(QPushButton):
@@ -14,7 +17,7 @@ class RibbonTabButton(QPushButton):
         super().__init__(text, parent)
         self.bg_color = bg_color
         self.text_color = text_color
-        self.setFixedSize(90, 30)
+        self.setFixedSize(120, 30)
         self.setStyleSheet(f"""
             QPushButton {{
                 background-color: transparent;
@@ -22,7 +25,7 @@ class RibbonTabButton(QPushButton):
                 font: bold 14px 'Segoe UI';
                 border: none;
                 padding: 5px;
-                text-align: left;
+                text-align: center;
             }}
             QPushButton:hover {{
                 background-color: #dddddd;
@@ -37,7 +40,7 @@ class RibbonTabButton(QPushButton):
                 font: bold 14px 'Segoe UI';
                 border: none;
                 padding: 5px;
-                text-align: left;
+                text-align: center;
             }}
         """)
         
@@ -49,7 +52,7 @@ class RibbonTabButton(QPushButton):
                 font: bold 14px 'Segoe UI';
                 border: none;
                 padding: 5px;
-                text-align: left;
+                text-align: center;
             }}
             QPushButton:hover {{
                 background-color: #dddddd;
@@ -68,7 +71,7 @@ class SubTabButton(QPushButton):
                 font: 14px 'Segoe UI';
                 border: none;
                 padding: 5px;
-                text-align: left;
+                text-align: center;
             }}
             QPushButton:hover {{
                 background-color: #eeeeee;
@@ -83,7 +86,7 @@ class SubTabButton(QPushButton):
                 font: 14px 'Segoe UI';
                 border: none;
                 padding: 5px;
-                text-align: left;
+                text-align: center;
             }}
         """)
         
@@ -95,13 +98,13 @@ class SubTabButton(QPushButton):
                 font: 14px 'Segoe UI';
                 border: none;
                 padding: 5px;
-                text-align: left;
+                text-align: center;
             }}
             QPushButton:hover {{
                 background-color: #eeeeee;
             }}
         """)
-        
+
 class MainTabContent(QWidget):
     def __init__(self, tab_info, parent=None):
         super().__init__(parent)

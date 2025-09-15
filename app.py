@@ -11,6 +11,7 @@ from screens.process.RM_check import CheckRMFrame
 from screens.process.weight_check import WeightCheckFrame
 from screens.process.volume_check import VolumeCheckFrame
 from screens.process.DF_check import DFCheckFrame
+from screens.compare_tab import CompareTab
 import os
 import pandas as pd
 import logging
@@ -36,12 +37,16 @@ class MainWindow(QMainWindow):
         self.weight_check =WeightCheckFrame(self,self)
         self.volume_check=VolumeCheckFrame(self,self)
         self.df_check=DFCheckFrame(self,self)
+        self.compare_tab=CompareTab(self,self)
         # Tab definitions
         tab_info = {
             "File": {
                 "New": "File -> New Content",
                 "Open": self.handle_excel,  # Updated to use handle_excel
                 "Close": "File -> Save Content"
+            },
+            "Find similarity":{
+                "display":self.compare_tab
             },
             "Elements": {
                 "Display": self.elements_tab,
