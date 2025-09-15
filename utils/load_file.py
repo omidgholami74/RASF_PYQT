@@ -7,23 +7,23 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox
 # Setup logging
 logger = logging.getLogger(__name__)
 
-def load_excel(main_window):
-    """Load and parse Excel/CSV file, update UI, and return DataFrame and file path"""
+def load_excel(app):
+    """Load and parse Excel/CSV file, update UI via MainTabContent, and return DataFrame and file path"""
     logger.debug("Loading Excel/CSV file")
     file_path, _ = QFileDialog.getOpenFileName(
-        main_window,
+        app,
         "Open File",
         "",
         "CSV files (*.csv);;Excel files (*.xlsx *.xls)"
     )
     
     if not file_path:
-        main_window.file_path_label.setText("File Path: No file selected")
-        main_window.setWindowTitle("RASF Data Processor")
+        app.file_path_label.setText("File Path: No file selected")
+        app.setWindowTitle("RASF Data Processor")
         return None
         
     try:
-        main_window.file_path_label.setText(f"File Path: {file_path}")
+        app.file_path_label.setText(f"File Path: {file_path}")
         
         is_new_format = False
         if file_path.endswith('.csv'):
@@ -181,33 +181,60 @@ def load_excel(main_window):
         
         logger.debug(f"Final DataFrame shape: {df.shape}")
         
+        # Store DataFrame and file path
+        app.data = df
+        app.file_path = file_path
         
-        # Update UI
-        if hasattr(main_window, 'elements_tab') and main_window.elements_tab:
-            main_window.elements_tab.process_blk_elements()
-        else:
-            # Fallback to display placeholder elements
-            if hasattr(main_window, 'elements_tab'):
-                main_window.elements_tab.display_elements(["Cu", "Zn", "Fe"])
+        # Update UI via MainTabContent
+        if hasattr(app, 'main_content'):
+            # Update Elements tab
+            if hasattr(app, 'elements_tab') and app.elements_tab:
+                app.elements_tab.process_blk_elements()
+            else:
+                if hasattr(app, 'elements_tab'):
+                    app.elements_tab.display_elements(["Cu", "Zn", "Fe"])
+            
+            # Trigger pivot tab updates
+            if "pivot" in app.main_content.tab_subtab_map:
+                pivot_subtabs = app.main_content.tab_subtab_map["pivot"]["widgets"]
+                if "Display" in pivot_subtabs:
+                    # Ensure pivot_tab is reset and updated
+                    if hasattr(app.pivot_tab, 'reset_cache'):
+                        app.main_content.switch_subtab("Display", "pivot")  # Show pivot table
+                        app.pivot_tab.reset_cache()
+                    if hasattr(app.pivot_tab, 'create_pivot'):
+                        app.pivot_tab.create_pivot()
+            
+            # Trigger CRM tab updates
+            if "CRM" in app.main_content.tab_subtab_map:
+                crm_subtabs = app.main_content.tab_subtab_map["CRM"]["widgets"]
+                if "CRM" in crm_subtabs:
+                    if hasattr(app.crm_tab, 'reset_cache'):
+                        app.main_content.switch_subtab("CRM", "CRM")  # Show CRM tab
+                        app.crm_tab.reset_cache()
+                    if hasattr(app.crm_tab, 'load_and_display'):
+                        app.crm_tab.load_and_display()
+            
+            # Trigger Process tab updates
+            if "Process" in app.main_content.tab_subtab_map:
+                process_subtabs = app.main_content.tab_subtab_map["Process"]["widgets"]
+                if "Result" in process_subtabs:
+                    if hasattr(app.results, 'reset_cache'):
+                        app.main_content.switch_subtab("Result", "Process")  # Show ResultsFrame
+                        app.results.reset_cache()
+                    if hasattr(app.results, 'show_processed_data'):
+                        app.results.show_processed_data()
         
-        if hasattr(main_window, 'pivot_tab'):
-            main_window.pivot_tab.reset_cache()
-            main_window.pivot_tab.create_pivot()
-        if hasattr(main_window, 'crm_tab'):
-            main_window.crm_tab.reset_cache()
-            main_window.crm_tab.load_and_display()
-        if hasattr(main_window, 'results'):
-            main_window.results.reset_cache()
-            main_window.results.show_processed_data()
+        # Switch to Calibration tab
+        if hasattr(app, 'main_content'):
+            app.main_content.switch_tab("Calibration")
         
-        QMessageBox.information(main_window, "Success", "File loaded successfully!")
-        main_window.switch_tab("Calibration")
-        
+        QMessageBox.information(app, "Success", "File loaded successfully!")
         return df, file_path
         
     except Exception as e:
         logger.error(f"Failed to load file: {str(e)}")
-        QMessageBox.warning(main_window, "Error", f"Failed to load file:\n{str(e)}")
-        main_window.file_path_label.setText("File Path: No file selected")
-        main_window.setWindowTitle("RASF Data Processor")
+        QMessageBox.warning(app, "Error", f"Failed to load file:\n{str(e)}")
+        app.file_path_label.setText("File Path: No file selected")
+        app.setWindowTitle("RASF Data Processor")
         return None

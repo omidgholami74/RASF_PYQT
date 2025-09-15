@@ -1,13 +1,18 @@
 import sys
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, QTreeWidget, QTreeWidgetItem
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, QTreeWidget, QTreeWidgetItem, QGridLayout
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
+import logging
+
+# Setup logging
+logger = logging.getLogger(__name__)
 
 class ElementsTab(QWidget):
     def __init__(self, app, parent=None):
         super().__init__(parent)
         self.app = app
         self.current_element = None
+        self.filtered_elements = []  # Initialize filtered_elements
         self.setup_ui()
     
     def setup_ui(self):
@@ -21,7 +26,7 @@ class ElementsTab(QWidget):
         
         # Container for element buttons
         self.elements_container = QWidget(self)
-        self.elements_grid_layout = QHBoxLayout()
+        self.elements_grid_layout = QGridLayout()  # Use QGridLayout instead of QHBoxLayout
         self.elements_grid_layout.setContentsMargins(10, 10, 10, 10)
         self.elements_grid_layout.setSpacing(10)
         self.elements_container.setLayout(self.elements_grid_layout)
@@ -131,15 +136,13 @@ class ElementsTab(QWidget):
     
     def display_elements(self, elements):
         """Display element buttons in the container"""
+        # Clear existing widgets without replacing the layout
         for i in reversed(range(self.elements_grid_layout.count())):
-            widget = self.elements_grid_layout.itemAt(i).widget()
-            if widget:
-                widget.deleteLater()
+            item = self.elements_grid_layout.itemAt(i)
+            if item.widget():
+                item.widget().deleteLater()
         
         num_columns = 12
-        self.elements_grid_layout = QHBoxLayout()
-        self.elements_container.setLayout(self.elements_grid_layout)
-        
         for i, element in enumerate(elements):
             row = i // num_columns
             col = i % num_columns
@@ -226,3 +229,33 @@ class ElementsTab(QWidget):
                     selected_wavelength
                 ])
                 self.details_tree.addTopLevelItem(item)
+    
+    def process_blk_elements(self):
+        """Process BLK data and display unique elements"""
+        logger.debug("Processing BLK elements")
+        df = self.app.get_data()
+        if df is None:
+            logger.debug("No data available in process_blk_elements")
+            self.display_elements(["Cu", "Zn", "Fe"])  # Fallback elements
+            return
+        
+        # Filter BLK data
+        if 'Type' in df.columns:
+            blk_data = df[df['Type'] == 'Blk']
+        else:
+            blk_data = df[df['Solution Label'].str.contains("BLANK", case=False, na=False)]
+        
+        # Extract unique element names
+        self.filtered_elements = []
+        for element in blk_data['Element'].unique():
+            element_name = str(element).split()[0]  # Get base element name (e.g., 'Cu' from 'Cu 324.754')
+            if element_name and element_name not in self.filtered_elements:
+                self.filtered_elements.append(element_name)
+        
+        # Display elements
+        if self.filtered_elements:
+            logger.debug(f"Displaying filtered elements: {self.filtered_elements}")
+            self.display_elements(self.filtered_elements)
+        else:
+            logger.debug("No BLK elements found, displaying default elements")
+            self.display_elements(["Cu", "Zn", "Fe"])  # Fallback if no BLK elements
