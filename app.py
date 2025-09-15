@@ -1,5 +1,5 @@
 import sys
-from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame
+from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame,QTabWidget
 from PyQt6.QtCore import Qt
 from tab import MainTabContent, RibbonTabButton, SubTabButton, TAB_COLORS
 from screens.calibration_tab import ElementsTab
@@ -7,7 +7,13 @@ from screens.pivot.pivot_tab import PivotTab
 from screens.CRM import CRMTab
 from utils.load_file import load_excel
 from screens.process.result import ResultsFrame
+from screens.process.RM_check import CheckRMFrame
 import os
+import pandas as pd
+import logging
+
+# Setup logging
+logger = logging.getLogger(__name__)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -23,7 +29,7 @@ class MainWindow(QMainWindow):
         self.elements_tab = ElementsTab(self, self)
         self.crm_tab = CRMTab(self, self)
         self.results = ResultsFrame(self, self)
-        
+        self.rm_check=CheckRMFrame(self,self)
         # Tab definitions
         tab_info = {
             "File": {
@@ -49,7 +55,7 @@ class MainWindow(QMainWindow):
             "Process": {
                 "Weight Check": "File -> New Content",
                 "DF check": "File -> Save Content",
-                "RM check": "File -> Save Content",
+                "RM check": self.rm_check,
                 "Result": self.results
             }
         }
@@ -66,6 +72,33 @@ class MainWindow(QMainWindow):
             self.data, self.file_path = result
             file_name = os.path.basename(self.file_path)
             self.setWindowTitle(f"RASF Data Processor - {file_name}")
+    def set_data(self, df, for_results=False):
+        """Set or update the application-wide DataFrame."""
+        try:
+            if not isinstance(df, pd.DataFrame):
+                logger.error("Invalid data type provided to set_data: must be a pandas DataFrame")
+                return
+            self.data = df.copy(deep=True)
+            logger.debug(f"Data set {'for results' if for_results else ''}. Shape: {self.data.shape}")
+            if for_results:
+                self.notify_data_changed()
+        except Exception as e:
+            logger.error(f"Error in set_data: {e}")
+
+
+    def notify_data_changed(self):
+        """Notify all tabs that data has changed."""
+        try:
+            for tab_index in range(self.tabs.count()):
+                tab_widget = self.tabs.widget(tab_index)
+                if isinstance(tab_widget, QTabWidget):
+                    for sub_tab_index in range(tab_widget.count()):
+                        sub_tab_widget = tab_widget.widget(sub_tab_index)
+                        if hasattr(sub_tab_widget, 'data_changed'):
+                            sub_tab_widget.data_changed()
+            logger.debug("Notified all tabs of data change")
+        except Exception as e:
+            logger.error(f"Error in notify_data_changed: {e}")
     
     def get_data(self):
         """Return the stored DataFrame"""
