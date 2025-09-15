@@ -3,7 +3,8 @@ from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHB
 from PyQt6.QtCore import Qt
 from tab import MainTabContent
 from screens.calibration_tab import ElementsTab
-
+from screens.pivot.pivot_tab import PivotTab
+from screens.CRM import CRMTab
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -19,8 +20,8 @@ class MainWindow(QMainWindow):
                 "Save": "File -> Save Content"
             },
             "Insert": {
-                "Picture": "Insert -> Picture Content",
-                "Table": "Insert -> Table Content",
+                "Picture": PivotTab(self,self),
+                "Table": CRMTab(self,self),
                 "Chart": "Insert -> Chart Content"
             },
             "View": {
