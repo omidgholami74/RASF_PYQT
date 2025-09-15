@@ -6,7 +6,7 @@ import numpy as np
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, QTableView, 
                              QDialog, QCheckBox, QLineEdit, QFrame, QTreeView, QFileDialog, QMessageBox, QHeaderView)
 from PyQt6.QtCore import Qt, QSortFilterProxyModel, QAbstractTableModel, QModelIndex
-from PyQt6.QtGui import QFont, QColor, QStandardItemModel, QStandardItem
+from PyQt6.QtGui import QFont, QColor, QStandardItemModel, QStandardItem,QPainter,QPen
 from PyQt6.QtCharts import QChart, QChartView, QLineSeries, QScatterSeries, QValueAxis, QCategoryAxis
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font as OpenPyXLFont, Alignment, Border, Side
