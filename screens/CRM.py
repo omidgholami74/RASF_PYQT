@@ -15,6 +15,105 @@ import logging
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+# Global stylesheet (defined above)
+global_style = """
+    QWidget {
+        background-color: white;
+        font: 12px 'Segoe UI';
+    }
+    QDialog {
+        background-color: white;
+        border: 1px solid #cccccc;
+        border-radius: 4px;
+    }
+    QPushButton {
+        background-color: #f5f5f5;
+        color: black;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        padding: 8px 12px;
+        font: bold 11px 'Segoe UI';
+        min-width: 110px;
+        min-height: 32px;
+    }
+    QPushButton:hover {
+        background-color: #e0e0e0;
+        border: 1px solid #aaa;
+    }
+    QPushButton:pressed {
+        background-color: #d0d0d0;
+    }
+    QComboBox {
+        background-color: white;
+        color: black;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        padding: 8px;
+        font: 11px 'Segoe UI';
+    }
+    QComboBox:hover {
+        border: 1px solid #aaa;
+    }
+    QComboBox QAbstractItemView {
+        background-color: white;
+        color: black;
+        selection-background-color: #e0e0e0;
+        selection-color: black;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+    }
+    QLineEdit {
+        background-color: white;
+        color: black;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        padding: 8px;
+        font: 11px 'Segoe UI';
+    }
+    QLineEdit:focus {
+        border: 1px solid #0078d4;
+    }
+    QTableView {
+        background-color: white;
+        alternate-background-color: #f9f9f9;
+        border: 1px solid #ccc;
+        font: 11px 'Segoe UI';
+        selection-background-color: #ADD8E6;
+        selection-color: black;
+        gridline-color: #e0e0e0;
+    }
+    QHeaderView::section {
+        background-color: #e0e0e0;
+        color: black;
+        border: 1px solid #ccc;
+        padding: 6px;
+        font: bold 11px 'Segoe UI';
+    }
+    QHeaderView::section:hover {
+        background-color: #d0d0d0;
+    }
+    QScrollArea {
+        background-color: white;
+        border: none;
+    }
+    QScrollBar:vertical, QScrollBar:horizontal {
+        background: #f0f0f0;
+        border: 1px solid #ccc;
+        border-radius: 3px;
+    }
+    QScrollBar::handle {
+        background: #aaaaaa;
+        border-radius: 3px;
+    }
+    QScrollBar::handle:hover {
+        background: #888888;
+    }
+    QLabel {
+        color: black;
+        font: 12px 'Segoe UI';
+    }
+"""
+
 class CRMTableModel(QAbstractTableModel):
     """Custom model for QTableView to display CRM data efficiently."""
     def __init__(self, crm_tab, df=None, decimal_places=2):
@@ -83,59 +182,58 @@ class CRMTab(QWidget):
         self.sort_column = None
         self.sort_reverse = False
         self.ui_initialized = False
+        self.setStyleSheet(global_style)
         self.setup_ui()
         self.init_db()
 
     def setup_ui(self):
         """Setup UI with controls and placeholder."""
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setContentsMargins(1, 1, 1,1)  # Increased margins for breathing room
+        main_layout.setSpacing(1)  # Slightly larger spacing for clarity
 
         # Control frame
         control_frame = QFrame()
         control_layout = QHBoxLayout(control_frame)
-        control_layout.setContentsMargins(3, 3, 3, 3)
+        control_layout.setContentsMargins(6, 6, 6, 6)  # Optimized margins
+        control_layout.setSpacing(12)  # Consistent spacing
 
         # Analysis Method Filter
-        control_layout.addWidget(QLabel("Analysis Method:", font=QFont("Segoe UI", 10)))
-        self.filter_var = QComboBox()
-        self.filter_var.setFixedWidth(150)
-        self.filter_var.setFont(QFont("Segoe UI", 10))
+        control_layout.addWidget(QLabel("Analysis Method:", font=QFont("Segoe UI", 11)))
+        self.filter_var.setFixedWidth(180)
+        self.filter_var.setToolTip("Filter by analysis method")
         self.filter_var.currentTextChanged.connect(self.update_display)
         control_layout.addWidget(self.filter_var)
 
         # Decimal Places
-        control_layout.addWidget(QLabel("Decimals:", font=QFont("Segoe UI", 10)))
+        control_layout.addWidget(QLabel("Decimals:", font=QFont("Segoe UI", 11)))
         self.decimal_places.addItems(["0", "1", "2", "3"])
         self.decimal_places.setCurrentText("2")
-        self.decimal_places.setFixedWidth(60)
-        self.decimal_places.setFont(QFont("Segoe UI", 10))
+        self.decimal_places.setFixedWidth(80)
+        self.decimal_places.setToolTip("Set decimal places for numeric values")
         self.decimal_places.currentTextChanged.connect(self.update_display)
         control_layout.addWidget(self.decimal_places)
 
         # Search Field
-        self.search_var.setPlaceholderText("Search...")
-        self.search_var.setFixedWidth(150)
-        self.search_var.setFont(QFont("Segoe UI", 10))
+        self.search_var.setPlaceholderText("Search by any field...")
+        self.search_var.setFixedWidth(180)
+        self.search_var.setToolTip("Search across all columns")
         self.search_var.textChanged.connect(self.update_display)
         control_layout.addWidget(self.search_var)
 
         # CRUD Buttons
         add_btn = QPushButton("Add Record")
-        add_btn.setFixedSize(100, 28)
-        add_btn.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        add_btn.setToolTip("Add a new CRM record")
         add_btn.clicked.connect(self.open_add_window)
         control_layout.addWidget(add_btn)
 
         edit_btn = QPushButton("Edit Record")
-        edit_btn.setFixedSize(100, 28)
-        edit_btn.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        edit_btn.setToolTip("Edit the selected record")
         edit_btn.clicked.connect(self.open_edit_window)
         control_layout.addWidget(edit_btn)
 
         delete_btn = QPushButton("Delete Selected")
-        delete_btn.setFixedSize(100, 28)
-        delete_btn.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        delete_btn.setToolTip("Delete the selected record")
         delete_btn.clicked.connect(self.delete_selected)
         control_layout.addWidget(delete_btn)
 
@@ -145,6 +243,7 @@ class CRMTab(QWidget):
         # Placeholder label
         self.placeholder_label = QLabel("Click 'Display' to load data.", font=QFont("Segoe UI", 12))
         self.placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.placeholder_label.setStyleSheet("color: #666666;")
         main_layout.addWidget(self.placeholder_label)
 
         # Apply styles
@@ -164,32 +263,24 @@ class CRMTab(QWidget):
         # Table container
         table_container = QFrame()
         table_layout = QVBoxLayout(table_container)
-        table_layout.setContentsMargins(0, 0, 0, 0)
+        table_layout.setContentsMargins(0, 0, 0, 0)  # No margins for table
+        table_layout.setSpacing(0)
 
         self.table_view = QTableView()
         self.table_view.setAlternatingRowColors(True)
-        self.table_view.setSelectionMode(QTableView.SelectionMode.ExtendedSelection)
+        self.table_view.setSelectionMode(QTableView.SelectionMode.SingleSelection)
+        self.table_view.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self.table_view.setSortingEnabled(True)
-        self.table_view.setFont(QFont("Segoe UI", 10))
-        self.table_view.horizontalHeader().setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        self.table_view.setFont(QFont("Segoe UI", 11))
+        self.table_view.horizontalHeader().setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
         self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.table_view.horizontalHeader().setMinimumSectionSize(100)
+        self.table_view.horizontalHeader().setStretchLastSection(True)
         self.table_view.verticalHeader().setVisible(False)
-        self.table_view.setStyleSheet("""
-            QTableView {
-                background-color: white;
-                alternate-background-color: #f5f5f5;
-                border: 1px solid #ccc;
-            }
-            QTableView::item:selected {
-                background-color: #E8F4F8;
-                color: black;
-            }
-            QHeaderView::section {
-                background-color: #d3d3d3;
-                border: 1px solid #ccc;
-                padding: 2px;
-            }
-        """)
+        self.table_view.setEnabled(True)
+        self.table_view.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.table_view.setStyleSheet(global_style)
+        self.table_view.setShowGrid(True)  # Ensure grid lines are visible
         table_layout.addWidget(self.table_view)
 
         # Horizontal scrollbar
@@ -296,16 +387,16 @@ class CRMTab(QWidget):
                 self._set_status_table("Missing required columns")
                 return
 
-            # Aggregate to avoid duplicates: take the first Sort Grade for each CRM ID and Element
+            # Aggregate to avoid duplicates
             aggregated_df = df.groupby(['CRM ID', 'Element'])['Sort Grade'].first().reset_index()
 
-            # Now pivot without unique_id
+            # Pivot table
             pivot_df = pd.pivot_table(
                 aggregated_df,
                 index='CRM ID',
                 columns='Element',
                 values='Sort Grade',
-                aggfunc='first'  # Or 'mean' if you prefer averaging numeric values
+                aggfunc='first'
             ).reset_index()
 
             self.pivot_data = pivot_df
@@ -313,8 +404,11 @@ class CRMTab(QWidget):
             self.table_view.setModel(model)
             
             # Set column widths
-            for col, width in model.column_widths.items():
-                self.table_view.horizontalHeader().resizeSection(col, width)
+            for col_idx, col in enumerate(pivot_df.columns):
+                max_width = max([len(str(x)) for x in pivot_df[col].dropna()] + [len(str(col))], default=10)
+                pixel_width = min(max_width * 8, 160)
+                self.column_widths[col] = pixel_width
+                self.table_view.setColumnWidth(col_idx, pixel_width)
 
         except Exception as e:
             logger.error(f"Failed to update display: {str(e)}")
@@ -336,22 +430,32 @@ class CRMTab(QWidget):
 
         dialog = QDialog(self)
         dialog.setWindowTitle("Search CRM Table")
-        dialog.setGeometry(200, 200, 250, 120)
+        dialog.setGeometry(200, 200, 300, 150)
         dialog.setModal(True)
+        dialog.setStyleSheet(global_style)
         layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(12)
 
-        layout.addWidget(QLabel("Search:", font=QFont("Segoe UI", 10)))
+        layout.addWidget(QLabel("Search:", font=QFont("Segoe UI", 11)))
         search_entry = QLineEdit()
         search_entry.setText(self.search_var.text())
-        search_entry.textChanged.connect(lambda text: setattr(self, 'search_var', search_entry))
+        search_entry.setFont(QFont("Segoe UI", 11))
+        search_entry.setToolTip("Enter search term")
+        search_entry.textChanged.connect(lambda text: self.search_var.setText(text))
         layout.addWidget(search_entry)
 
         button_layout = QHBoxLayout()
+        button_layout.setSpacing(12)
         search_btn = QPushButton("Search")
-        search_btn.clicked.connect(lambda: self.update_display())
+        search_btn.setFixedSize(120, 34)
+        search_btn.setToolTip("Apply search filter")
+        search_btn.clicked.connect(self.update_display)
         button_layout.addWidget(search_btn)
 
         close_btn = QPushButton("Close")
+        close_btn.setFixedSize(120, 34)
+        close_btn.setToolTip("Close this dialog")
         close_btn.clicked.connect(dialog.accept)
         button_layout.addWidget(close_btn)
 
@@ -366,26 +470,36 @@ class CRMTab(QWidget):
 
         dialog = QDialog(self)
         dialog.setWindowTitle("Filter Analysis Method")
-        dialog.setGeometry(200, 200, 250, 120)
+        dialog.setGeometry(200, 200, 300, 150)
         dialog.setModal(True)
+        dialog.setStyleSheet(global_style)
         layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(12)
 
-        layout.addWidget(QLabel("Select Analysis Method:", font=QFont("Segoe UI", 10)))
+        layout.addWidget(QLabel("Select Analysis Method:", font=QFont("Segoe UI", 11)))
         filter_combo = QComboBox()
         cursor = self.conn.cursor()
         cursor.execute("SELECT DISTINCT [Analysis Method] FROM crm WHERE [Analysis Method] IS NOT NULL")
         unique_methods = ["All"] + sorted([row[0] for row in cursor.fetchall()])
         filter_combo.addItems(unique_methods)
+        filter_combo.setFont(QFont("Segoe UI", 11))
         filter_combo.setCurrentText(self.filter_var.currentText())
-        filter_combo.currentTextChanged.connect(lambda text: setattr(self, 'filter_var', filter_combo))
+        filter_combo.setToolTip("Select an analysis method to filter")
+        filter_combo.currentTextChanged.connect(lambda text: self.filter_var.setCurrentText(text))
         layout.addWidget(filter_combo)
 
         button_layout = QHBoxLayout()
+        button_layout.setSpacing(12)
         apply_btn = QPushButton("Apply")
-        apply_btn.clicked.connect(lambda: self.update_display())
+        apply_btn.setFixedSize(120, 34)
+        apply_btn.setToolTip("Apply the selected filter")
+        apply_btn.clicked.connect(self.update_display)
         button_layout.addWidget(apply_btn)
 
         close_btn = QPushButton("Close")
+        close_btn.setFixedSize(120, 34)
+        close_btn.setToolTip("Close this dialog")
         close_btn.clicked.connect(dialog.accept)
         button_layout.addWidget(close_btn)
 
@@ -400,9 +514,12 @@ class CRMTab(QWidget):
 
         dialog = QDialog(self)
         dialog.setWindowTitle("Add New CRM Record")
-        dialog.setGeometry(200, 200, 350, 500)
+        dialog.setGeometry(200, 200, 380, 540)
         dialog.setModal(True)
+        dialog.setStyleSheet(global_style)
         layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(14)
 
         cursor = self.conn.cursor()
         cursor.execute("PRAGMA table_info(crm)")
@@ -412,11 +529,15 @@ class CRMTab(QWidget):
         scroll_area = QScrollArea()
         scroll_widget = QWidget()
         grid_layout = QGridLayout(scroll_widget)
+        grid_layout.setContentsMargins(6, 6, 6, 6)
+        grid_layout.setSpacing(10)
         for i, col in enumerate(columns):
-            grid_layout.addWidget(QLabel(f"{col}:", font=QFont("Segoe UI", 10)), i, 0, Qt.AlignmentFlag.AlignLeft)
+            label = QLabel(f"{col}:", font=QFont("Segoe UI", 11))
+            label.setFixedWidth(160)
+            grid_layout.addWidget(label, i, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
             entry = entry_vars[col]
-            entry.setFixedWidth(200)
-            entry.setFont(QFont("Segoe UI", 10))
+            entry.setFixedWidth(180)
+            entry.setToolTip(f"Enter value for {col}")
             grid_layout.addWidget(entry, i, 1)
 
         scroll_widget.setLayout(grid_layout)
@@ -425,11 +546,16 @@ class CRMTab(QWidget):
         layout.addWidget(scroll_area)
 
         button_layout = QHBoxLayout()
+        button_layout.setSpacing(12)
         save_btn = QPushButton("Save")
+        save_btn.setFixedSize(120, 34)
+        save_btn.setToolTip("Save the new record")
         save_btn.clicked.connect(lambda: self.save_record(entry_vars, dialog))
         button_layout.addWidget(save_btn)
 
         cancel_btn = QPushButton("Cancel")
+        cancel_btn.setFixedSize(120, 34)
+        cancel_btn.setToolTip("Cancel and close")
         cancel_btn.clicked.connect(dialog.accept)
         button_layout.addWidget(cancel_btn)
 
@@ -460,6 +586,7 @@ class CRMTab(QWidget):
             return
 
         selected = self.table_view.selectionModel().selectedRows()
+        logger.debug(f"Selected rows: {len(selected)}")
         if not selected:
             QMessageBox.warning(self, "Warning", "Please select a record to edit!")
             return
@@ -469,25 +596,32 @@ class CRMTab(QWidget):
 
         dialog = QDialog(self)
         dialog.setWindowTitle("Edit CRM Record")
-        dialog.setGeometry(200, 200, 350, 500)
+        dialog.setGeometry(200, 200, 380, 540)
         dialog.setModal(True)
+        dialog.setStyleSheet(global_style)
         layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(14)
 
         cursor = self.conn.cursor()
         cursor.execute("PRAGMA table_info(crm)")
         columns = [info[1] for info in cursor.fetchall()]
         row = selected[0].row()
         values = [self.table_view.model().data(self.table_view.model().index(row, i)) for i in range(self.table_view.model().columnCount())]
-        entry_vars = {col: QLineEdit(values[i]) for i, col in enumerate(columns)}
+        entry_vars = {col: QLineEdit(str(values[i]) if values[i] is not None else "") for i, col in enumerate(columns)}
 
         scroll_area = QScrollArea()
         scroll_widget = QWidget()
         grid_layout = QGridLayout(scroll_widget)
+        grid_layout.setContentsMargins(6, 6, 6, 6)
+        grid_layout.setSpacing(10)
         for i, col in enumerate(columns):
-            grid_layout.addWidget(QLabel(f"{col}:", font=QFont("Segoe UI", 10)), i, 0, Qt.AlignmentFlag.AlignLeft)
+            label = QLabel(f"{col}:", font=QFont("Segoe UI", 11))
+            label.setFixedWidth(160)
+            grid_layout.addWidget(label, i, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
             entry = entry_vars[col]
-            entry.setFixedWidth(200)
-            entry.setFont(QFont("Segoe UI", 10))
+            entry.setFixedWidth(180)
+            entry.setToolTip(f"Edit value for {col}")
             grid_layout.addWidget(entry, i, 1)
 
         scroll_widget.setLayout(grid_layout)
@@ -496,11 +630,16 @@ class CRMTab(QWidget):
         layout.addWidget(scroll_area)
 
         button_layout = QHBoxLayout()
+        button_layout.setSpacing(12)
         save_btn = QPushButton("Save")
+        save_btn.setFixedSize(120, 34)
+        save_btn.setToolTip("Save changes")
         save_btn.clicked.connect(lambda: self.save_edit(entry_vars, values[0], dialog))
         button_layout.addWidget(save_btn)
 
         cancel_btn = QPushButton("Cancel")
+        cancel_btn.setFixedSize(120, 34)
+        cancel_btn.setToolTip("Cancel and close")
         cancel_btn.clicked.connect(dialog.accept)
         button_layout.addWidget(cancel_btn)
 
