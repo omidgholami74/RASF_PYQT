@@ -2,10 +2,10 @@ import sys
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTableView,
     QHeaderView, QScrollBar, QComboBox, QLineEdit, QDialog, QFileDialog, QMessageBox, QFrame,
-    QAbstractItemView
+    QAbstractItemView, QGroupBox
 )
 from PyQt6.QtCore import Qt, QAbstractTableModel, QVariant
-from PyQt6.QtGui import QStandardItemModel, QStandardItem, QFont, QPen, QColor,QPainter
+from PyQt6.QtGui import QStandardItemModel, QStandardItem, QFont, QPen, QColor, QPainter
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
@@ -15,62 +15,97 @@ import numpy as np
 import os
 import platform
 
-# Global stylesheet for consistent UI and white backgrounds
+# Global stylesheet for consistent UI
 global_style = """
     QWidget {
-        background-color: white;
-        font: 12px 'Segoe UI';
+        background-color: #F5F7FA;
+        font-family: 'Inter', 'Segoe UI', sans-serif;
+        font-size: 13px;
     }
     QDialog {
-        background-color: white;
+        background-color: #F5F7FA;
+    }
+    QGroupBox {
+        font-weight: bold;
+        color: #1A3C34;
+        margin-top: 15px;
+        border: 1px solid #D0D7DE;
+        border-radius: 6px;
+        padding: 10px;
+    }
+    QGroupBox::title {
+        subcontrol-origin: margin;
+        subcontrol-position: top left;
+        padding: 0 5px;
+        left: 10px;
     }
     QPushButton {
-        background-color: #f5f5f5;
-        color: black;
-        border: 1px solid #ccc;
-        padding: 5px;
-        font: bold 11px 'Segoe UI';
-        min-width: 140px;
-        min-height: 30px;
+        background-color: #2E7D32;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        font-weight: 600;
+        font-size: 13px;
+        border-radius: 6px;
     }
     QPushButton:hover {
-        background-color: #ddd;
+        background-color: #1B5E20;
+    }
+    QPushButton:disabled {
+        background-color: #E0E0E0;
+        color: #6B7280;
     }
     QComboBox {
-        background-color: white;
-        color: black;
-        border: 1px solid #ccc;
-        padding: 5px;
-        font: 12px 'Segoe UI';
+        background-color: #FFFFFF;
+        color: #1A3C34;
+        border: 1px solid #D0D7DE;
+        padding: 6px;
+        font-size: 13px;
+        border-radius: 6px;
+    }
+    QComboBox:focus {
+        border: 1px solid #2E7D32;
+        box-shadow: 0 0 5px rgba(46, 125, 50, 0.3);
     }
     QComboBox QAbstractItemView {
-        background-color: white;
-        color: black;
-        selection-background-color: #ddd;
-        selection-color: black;
+        background-color: #FFFFFF;
+        color: #1A3C34;
+        selection-background-color: #DBEAFE;
+        selection-color: #1A3C34;
     }
     QLineEdit {
-        background-color: white;
-        color: black;
-        border: 1px solid #ccc;
-        padding: 5px;
-        font: 12px 'Segoe UI';
+        background-color: #FFFFFF;
+        color: #1A3C34;
+        border: 1px solid #D0D7DE;
+        padding: 6px;
+        font-size: 13px;
+        border-radius: 6px;
+    }
+    QLineEdit:focus {
+        border: 1px solid #2E7D32;
+        box-shadow: 0 0 5px rgba(46, 125, 50, 0.3);
     }
     QTableView {
-        background-color: white;
-        border: 1px solid #ccc;
-        font: 12px 'Segoe UI';
+        background-color: #FFFFFF;
+        border: 1px solid #D0D7DE;
+        gridline-color: #E5E7EB;
+        font-size: 12px;
+        selection-background-color: #DBEAFE;
+        selection-color: #1A3C34;
     }
     QHeaderView::section {
-        background-color: #d3d3d3;
-        font: bold 12px 'Segoe UI';
-        border: 1px solid #ccc;
+        background-color: #F9FAFB;
+        font-weight: 600;
+        color: #1A3C34;
+        border: 1px solid #D0D7DE;
+        padding: 6px;
     }
     QTableView::item {
-        border: 1px solid #d3d3d3;
+        border: 1px solid #D0D7DE;
     }
     QTableView::item:selected {
-        background-color: #b0b0b0;
+        background-color: #DBEAFE;
+        color: #1A3C34;
     }
 """
 
@@ -93,7 +128,7 @@ class PandasModel(QAbstractTableModel):
             value = self._data.iloc[index.row(), index.column()]
             return str(value)
         elif role == Qt.ItemDataRole.BackgroundRole:
-            return Qt.GlobalColor.lightGray if index.row() % 2 else Qt.GlobalColor.white
+            return QColor("#F9FAFB") if index.row() % 2 else Qt.GlobalColor.white
         return QVariant()
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
@@ -198,45 +233,54 @@ class FilterDialog(QDialog):
         self.solution_label_order = solution_label_order
         self.element_order = element_order
         self.update_callback = update_callback
-        self.setStyleSheet(global_style)  # Apply global stylesheet
+        self.setStyleSheet(global_style)
         self.setup_ui()
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(10)
 
-        # Filter field selection
-        layout.addWidget(QLabel("Select Column:", font=QFont("Segoe UI", 12)))
+        # Filter field selection group
+        filter_group = QGroupBox("Select Filter Column")
+        filter_layout = QVBoxLayout(filter_group)
         self.filter_combo = QComboBox()
         self.filter_combo.addItems(["Solution Label", "Element"])
-        self.filter_combo.setFont(QFont("Segoe UI", 12))
         self.filter_combo.setCurrentText(self.filter_field)
+        self.filter_combo.setToolTip("Choose the column to filter by")
         self.filter_combo.currentTextChanged.connect(self.update_checkboxes)
-        layout.addWidget(self.filter_combo)
+        filter_layout.addWidget(self.filter_combo)
+        layout.addWidget(filter_group)
 
-        # Table for filter values
+        # Filter values table
         self.filter_table = QTableView()
         self.filter_table.setSelectionMode(QTableView.SelectionMode.NoSelection)
         self.filter_table.setStyleSheet(global_style)
         self.filter_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.filter_table.setToolTip("Select values to include in the pivot table")
         layout.addWidget(self.filter_table)
 
-        # Scrollbar
-        self.filter_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        # Buttons group
+        button_group = QGroupBox("Filter Actions")
+        button_layout = QHBoxLayout(button_group)
+        button_layout.setSpacing(10)
 
-        # Buttons
         select_all_btn = QPushButton("Select All")
+        select_all_btn.setToolTip("Select all filter values")
         select_all_btn.clicked.connect(lambda: self.set_all_checkboxes(True))
-        layout.addWidget(select_all_btn)
+        button_layout.addWidget(select_all_btn)
 
         deselect_all_btn = QPushButton("Deselect All")
+        deselect_all_btn.setToolTip("Deselect all filter values")
         deselect_all_btn.clicked.connect(lambda: self.set_all_checkboxes(False))
-        layout.addWidget(deselect_all_btn)
+        button_layout.addWidget(deselect_all_btn)
 
         apply_btn = QPushButton("Apply")
+        apply_btn.setToolTip("Apply the selected filters")
         apply_btn.clicked.connect(self.accept)
-        layout.addWidget(apply_btn)
+        button_layout.addWidget(apply_btn)
 
+        layout.addWidget(button_group)
         self.update_checkboxes()
 
     def update_checkboxes(self):
@@ -268,7 +312,7 @@ class FilterDialog(QDialog):
         model.itemChanged.connect(lambda item: self.toggle_filter(item, field))
 
     def toggle_filter(self, item, field):
-        if item.column() == 1:  # Only handle changes in the "Select" column
+        if item.column() == 1:
             value = self.filter_table.model().item(item.row(), 0).text()
             self.filter_values[field][value] = (item.checkState() == Qt.CheckState.Checked)
             self.update_callback()
@@ -285,64 +329,68 @@ class ResultsFrame(QWidget):
     def __init__(self, app, parent=None):
         super().__init__(parent)
         self.app = app
-        self.setStyleSheet(global_style)  # Apply global stylesheet
+        self.setStyleSheet(global_style)
         self.search_var = ""
         self.filter_field = "Solution Label"
-        self.filter_values = {}  # Store selected filter values
+        self.filter_values = {}
         self.search_window = None
-        self.column_widths = {}  # Cache column widths
-        self.last_filtered_data = None  # Cache filtered data
-        self._last_cache_key = None  # Cache key for filtering
+        self.column_widths = {}
+        self.last_filtered_data = None
+        self._last_cache_key = None
         self.solution_label_order = None
         self.element_order = None
-        self.decimal_places = "1"  # Default to 1 decimal place
+        self.decimal_places = "1"
         self.setup_ui()
+        # Connect to app's data changed signal/callback
+        self.app.notify_data_changed = self.show_processed_data
 
     def setup_ui(self):
         """Setup Results UI with pivot table, scrollbars, and decimal places selection"""
         start_time = time.time()
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(15)
 
-        # Button frame
-        button_frame = QWidget()
-        button_layout = QHBoxLayout(button_frame)
-        button_layout.setContentsMargins(0, 0, 0, 0)
-        button_layout.setSpacing(5)
+        # Controls group
+        controls_group = QGroupBox("Table Controls")
+        controls_layout = QHBoxLayout(controls_group)
+        controls_layout.setSpacing(10)
 
         # Search button
         search_button = QPushButton("Search")
+        search_button.setToolTip("Search the pivot table")
         search_button.clicked.connect(self.open_search_window)
-        button_layout.addWidget(search_button)
+        controls_layout.addWidget(search_button)
 
         # Filter button
         filter_button = QPushButton("Filter")
+        filter_button.setToolTip("Filter the pivot table by Solution Label or Element")
         filter_button.clicked.connect(self.open_filter_window)
-        button_layout.addWidget(filter_button)
+        controls_layout.addWidget(filter_button)
 
         # Save button
         self.save_button = QPushButton("Save Processed Excel")
+        self.save_button.setToolTip("Save the pivot table to an Excel file")
         self.save_button.clicked.connect(self.save_processed_excel)
-        button_layout.addWidget(self.save_button)
+        controls_layout.addWidget(self.save_button)
 
         # Decimal places selection
         decimal_label = QLabel("Decimal Places:")
-        decimal_label.setFont(QFont("Segoe UI", 12))
-        button_layout.addWidget(decimal_label)
+        controls_layout.addWidget(decimal_label)
         self.decimal_combo = QComboBox()
         self.decimal_combo.addItems(["0", "1", "2", "3"])
         self.decimal_combo.setCurrentText(self.decimal_places)
-        self.decimal_combo.setFont(QFont("Segoe UI", 12))
         self.decimal_combo.setFixedWidth(60)
+        self.decimal_combo.setToolTip("Set the number of decimal places for numeric values")
         self.decimal_combo.currentTextChanged.connect(self.show_processed_data)
-        button_layout.addWidget(self.decimal_combo)
+        controls_layout.addWidget(self.decimal_combo)
+        controls_layout.addStretch()
 
-        layout.addWidget(button_frame)
+        layout.addWidget(controls_group)
 
-        # Table frame
-        table_frame = QFrame()
-        table_frame.setStyleSheet("background-color: white; border: 1px solid #ccc;")
-        table_layout = QVBoxLayout(table_frame)
+        # Table group
+        table_group = QGroupBox("Pivot Table")
+        table_layout = QVBoxLayout(table_group)
         table_layout.setContentsMargins(0, 0, 0, 0)
 
         # Table view with frozen first column
@@ -352,9 +400,10 @@ class ResultsFrame(QWidget):
         self.processed_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         self.processed_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self.processed_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.processed_table.setToolTip("Processed pivot table with filtered data")
         table_layout.addWidget(self.processed_table)
 
-        layout.addWidget(table_frame, stretch=1)
+        layout.addWidget(table_group, stretch=1)
         self.setLayout(layout)
 
         print(f"ResultsFrame UI setup took {time.time() - start_time:.3f} seconds")
@@ -510,20 +559,24 @@ class ResultsFrame(QWidget):
         self.search_window = QDialog(self)
         self.search_window.setWindowTitle("Search Pivot Table")
         self.search_window.setFixedSize(300, 150)
-        self.search_window.setStyleSheet(global_style)  # Apply global stylesheet
+        self.search_window.setStyleSheet(global_style)
         layout = QVBoxLayout(self.search_window)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(10)
 
-        layout.addWidget(QLabel("Search:", font=QFont("Segoe UI", 12)))
+        layout.addWidget(QLabel("Search:"))
         search_entry = QLineEdit()
-        search_entry.setFont(QFont("Segoe UI", 12))
+        search_entry.setToolTip("Enter text to search in the pivot table")
         search_entry.textChanged.connect(lambda text: setattr(self, 'search_var', text))
         layout.addWidget(search_entry)
 
         search_btn = QPushButton("Search")
+        search_btn.setToolTip("Perform the search")
         search_btn.clicked.connect(self.show_processed_data)
         layout.addWidget(search_btn)
 
         close_btn = QPushButton("Close")
+        close_btn.setToolTip("Close the search window")
         close_btn.clicked.connect(self.search_window.close)
         layout.addWidget(close_btn)
 
@@ -568,10 +621,10 @@ class ResultsFrame(QWidget):
 
                 header_fill = PatternFill(start_color="90EE90", end_color="90EE90", fill_type="solid")
                 first_column_fill = PatternFill(start_color="FFF5E4", end_color="FFF5E4", fill_type="solid")
-                odd_row_fill = PatternFill(start_color="f5f5f5", end_color="f5f5f5", fill_type="solid")
+                odd_row_fill = PatternFill(start_color="F9FAFB", end_color="F9FAFB", fill_type="solid")
                 even_row_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
-                header_font = Font(name="Segoe UI", size=12, bold=True)
-                cell_font = Font(name="Segoe UI", size=12)
+                header_font = Font(name="Inter", size=12, bold=True)
+                cell_font = Font(name="Inter", size=12)
                 cell_alignment = Alignment(horizontal="center", vertical="center")
                 thin_border = Border(
                     left=Side(style="thin"), right=Side(style="thin"),
