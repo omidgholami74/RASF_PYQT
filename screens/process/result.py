@@ -1,10 +1,11 @@
 import sys
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTableView,
-    QHeaderView, QScrollBar, QComboBox, QLineEdit, QDialog, QFileDialog, QMessageBox, QFrame
+    QHeaderView, QScrollBar, QComboBox, QLineEdit, QDialog, QFileDialog, QMessageBox, QFrame,
+    QAbstractItemView
 )
 from PyQt6.QtCore import Qt, QAbstractTableModel, QVariant
-from PyQt6.QtGui import QStandardItemModel, QStandardItem, QFont
+from PyQt6.QtGui import QStandardItemModel, QStandardItem, QFont, QPen, QColor,QPainter
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
@@ -65,6 +66,12 @@ global_style = """
         font: bold 12px 'Segoe UI';
         border: 1px solid #ccc;
     }
+    QTableView::item {
+        border: 1px solid #d3d3d3;
+    }
+    QTableView::item:selected {
+        background-color: #b0b0b0;
+    }
 """
 
 class PandasModel(QAbstractTableModel):
@@ -96,6 +103,90 @@ class PandasModel(QAbstractTableModel):
             return str(self._data.index[section])
         return QVariant()
 
+class FreezeTableWidget(QTableView):
+    """Custom QTableView with a frozen first column"""
+    def __init__(self, model, parent=None):
+        super().__init__(parent)
+        self.frozenTableView = QTableView(self)
+        self.setModel(model)
+        self.frozenTableView.setModel(model)
+        self.init()
+
+        # Connect signals for synchronized scrolling and resizing
+        self.horizontalHeader().sectionResized.connect(self.updateSectionWidth)
+        self.verticalHeader().sectionResized.connect(self.updateSectionHeight)
+        self.frozenTableView.verticalScrollBar().valueChanged.connect(self.frozenVerticalScroll)
+        self.verticalScrollBar().valueChanged.connect(self.mainVerticalScroll)
+
+    def init(self):
+        self.frozenTableView.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.frozenTableView.verticalHeader().hide()
+        self.frozenTableView.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        self.viewport().stackUnder(self.frozenTableView)
+        self.frozenTableView.setStyleSheet(global_style)
+        self.frozenTableView.setSelectionModel(self.selectionModel())
+        
+        # Hide all columns except the first one in the frozen table
+        for col in range(self.model().columnCount()):
+            self.frozenTableView.setColumnHidden(col, col != 0)
+        self.frozenTableView.setColumnWidth(0, self.columnWidth(0))
+        self.frozenTableView.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.frozenTableView.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerItem)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerItem)
+        self.frozenTableView.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerItem)
+        self.updateFrozenTableGeometry()
+        self.frozenTableView.show()
+        self.frozenTableView.viewport().repaint()
+
+    def updateSectionWidth(self, logicalIndex, oldSize, newSize):
+        if logicalIndex == 0:
+            self.frozenTableView.setColumnWidth(0, newSize)
+            self.updateFrozenTableGeometry()
+            self.frozenTableView.viewport().repaint()
+
+    def updateSectionHeight(self, logicalIndex, oldSize, newSize):
+        self.frozenTableView.setRowHeight(logicalIndex, newSize)
+        self.frozenTableView.viewport().repaint()
+
+    def frozenVerticalScroll(self, value):
+        self.verticalScrollBar().setValue(value)
+        self.frozenTableView.viewport().repaint()
+        self.viewport().update()
+
+    def mainVerticalScroll(self, value):
+        self.frozenTableView.verticalScrollBar().setValue(value)
+        self.frozenTableView.viewport().repaint()
+        self.viewport().update()
+
+    def updateFrozenTableGeometry(self):
+        self.frozenTableView.setGeometry(
+            self.verticalHeader().width() + self.frameWidth(),
+            self.frameWidth(),
+            self.columnWidth(0),
+            self.viewport().height() + self.horizontalHeader().height()
+        )
+        self.frozenTableView.viewport().repaint()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.updateFrozenTableGeometry()
+        self.frozenTableView.viewport().repaint()
+
+    def moveCursor(self, cursorAction, modifiers):
+        current = super().moveCursor(cursorAction, modifiers)
+        if cursorAction == QAbstractItemView.CursorAction.MoveLeft and current.column() > 0:
+            visual_x = self.visualRect(current).topLeft().x()
+            if visual_x < self.frozenTableView.columnWidth(0):
+                new_value = self.horizontalScrollBar().value() + visual_x - self.frozenTableView.columnWidth(0)
+                self.horizontalScrollBar().setValue(int(new_value))
+        return current
+
+    def scrollTo(self, index, hint=QAbstractItemView.ScrollHint.EnsureVisible):
+        if index.column() > 0:
+            super().scrollTo(index, hint)
+        self.frozenTableView.viewport().repaint()
+
 class FilterDialog(QDialog):
     """Dialog for selecting filter values"""
     def __init__(self, parent, filter_values, filter_field, solution_label_order, element_order, update_callback):
@@ -119,7 +210,7 @@ class FilterDialog(QDialog):
         self.filter_combo = QComboBox()
         self.filter_combo.addItems(["Solution Label", "Element"])
         self.filter_combo.setFont(QFont("Segoe UI", 12))
-        self.filter_combo.setCurrentText(self.filter_field)  # Fixed: Removed .get()
+        self.filter_combo.setCurrentText(self.filter_field)
         self.filter_combo.currentTextChanged.connect(self.update_checkboxes)
         layout.addWidget(self.filter_combo)
 
@@ -254,8 +345,8 @@ class ResultsFrame(QWidget):
         table_layout = QVBoxLayout(table_frame)
         table_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Table view
-        self.processed_table = QTableView()
+        # Table view with frozen first column
+        self.processed_table = FreezeTableWidget(PandasModel())
         self.processed_table.setStyleSheet(global_style)
         self.processed_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         self.processed_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
@@ -401,6 +492,9 @@ class ResultsFrame(QWidget):
             model.appendRow(items)
 
         self.processed_table.setModel(model)
+        self.processed_table.frozenTableView.setModel(model)
+        self.processed_table.model().layoutChanged.emit()
+        self.processed_table.frozenTableView.model().layoutChanged.emit()
         print(f"Show processed pivot data took {time.time() - start_time:.3f} seconds")
 
     def open_search_window(self):
