@@ -6,7 +6,7 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     window = MainWindow()
-    window.setWindowTitle("Office-style Tabs UI")
+    window.setWindowTitle("RASF PROCESSING")
     window.setGeometry(100, 100, 900, 600)
     window.show()
     sys.exit(app.exec())
