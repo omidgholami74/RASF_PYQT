@@ -3,10 +3,9 @@ import platform
 import re
 import pandas as pd
 import numpy as np
-from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, QTableView,
-                             QAbstractItemView, QDialog, QCheckBox, QLineEdit, QFrame, QTreeView, QFileDialog, QMessageBox,
-                             QHeaderView, QProgressDialog)
-from PyQt6.QtCore import Qt, QSortFilterProxyModel, QAbstractTableModel, QModelIndex, QThread, pyqtSignal, QObject
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, QTableView,QAbstractItemView, 
+                             QDialog, QCheckBox, QLineEdit, QFrame, QTreeView, QFileDialog, QMessageBox, QHeaderView)
+from PyQt6.QtCore import Qt, QSortFilterProxyModel, QAbstractTableModel, QModelIndex
 from PyQt6.QtGui import QFont, QColor, QStandardItemModel, QStandardItem, QPainter, QPen
 from PyQt6.QtCharts import QChart, QChartView, QLineSeries, QScatterSeries, QValueAxis, QCategoryAxis
 from openpyxl import Workbook
@@ -16,82 +15,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-class CRMWorker(QObject):
-    finished = pyqtSignal(dict, dict)
-    error = pyqtSignal(str)
-
-    def __init__(self, pivot_data, element_order, decimal_places, use_int_var, oxide_factors, excel_file='data crm.xlsx'):
-        super().__init__()
-        self.pivot_data = pivot_data
-        self.element_order = element_order
-        self.decimal_places = decimal_places
-        self.use_int_var = use_int_var
-        self.oxide_factors = oxide_factors
-        self.excel_file = excel_file
-
-    def run(self):
-        try:
-            if not os.path.exists(self.excel_file):
-                self.error.emit(f"Excel file {self.excel_file} not found!")
-                return
-
-            df_crm = pd.read_excel(self.excel_file)
-            required = {'CRM ID', 'Element', 'Sort Grade', 'Analysis Method'}
-            if not required.issubset(df_crm.columns):
-                self.error.emit("CRM Excel file missing required columns!")
-                return
-
-            inline_crm_rows = {}
-            included_crms = {}
-            crm_rows = self.pivot_data[self.pivot_data['Solution Label'].str.contains('CRM|par', case=False, na=False)].copy()
-            if crm_rows.empty:
-                self.error.emit("No CRM or par rows found in pivot data!")
-                return
-
-            dec = int(self.decimal_places)
-            for _, row in crm_rows.iterrows():
-                label = row['Solution Label']
-                m = re.search(r'\d+', str(label))
-                if not m:
-                    continue
-                crm_id_string = f"OREAS {m.group()}"
-                analysis_method = '4-Acid Digestion' if 'CRM' in str(label).upper() else 'Aqua Regia Digestion'
-
-                crm_data = df_crm[(df_crm['CRM ID'] == crm_id_string) & (df_crm['Analysis Method'] == analysis_method)][['Element', 'Sort Grade']]
-                if crm_data.empty:
-                    continue
-
-                crm_dict = {}
-                for _, crm_row in crm_data.iterrows():
-                    element_full = crm_row['Element']
-                    sort_grade = crm_row['Sort Grade']
-                    symbol = element_full.split(',')[-1].strip() if ',' in element_full else element_full.split()[-1].strip()
-                    try:
-                        crm_dict[symbol] = float(sort_grade)
-                    except (ValueError, TypeError):
-                        pass
-
-                crm_values = {'Solution Label': crm_id_string}
-                for col in self.element_order:
-                    if col == 'Solution Label' or col not in self.pivot_data.columns:
-                        continue
-                    element_symbol = col.split(' ')[0].split('_')[0]
-                    if element_symbol in crm_dict:
-                        if element_symbol in self.oxide_factors:
-                            _, factor = self.oxide_factors[element_symbol]
-                            crm_values[col] = crm_dict[element_symbol] * factor
-                        else:
-                            crm_values[col] = crm_dict[element_symbol]
-                if len(crm_values) > 1:
-                    inline_crm_rows.setdefault(label, []).append(crm_values)
-                    included_crms[label] = QCheckBox(label, checked=True)
-
-            self.finished.emit(inline_crm_rows, included_crms)
-
-        except Exception as e:
-            self.error.emit(f"Failed to check RM: {str(e)}")
-
 class FreezeTableWidget(QTableView):
+    """A QTableView with a frozen first column that does not scroll horizontally."""
     def __init__(self, model, parent=None):
         super().__init__(parent)
         self.frozenTableView = QTableView(self)
@@ -99,69 +24,72 @@ class FreezeTableWidget(QTableView):
         self.frozenTableView.setModel(model)
         self.init()
 
+        # Connect headers and scrollbars
         self.horizontalHeader().sectionResized.connect(self.updateSectionWidth)
         self.verticalHeader().sectionResized.connect(self.updateSectionHeight)
         self.frozenTableView.verticalScrollBar().valueChanged.connect(self.frozenVerticalScroll)
         self.verticalScrollBar().valueChanged.connect(self.mainVerticalScroll)
 
     def init(self):
+        """Initialize the frozen table view for the first column."""
         self.frozenTableView.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.frozenTableView.verticalHeader().hide()
         self.frozenTableView.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         self.viewport().stackUnder(self.frozenTableView)
-
+        
+        # Inherit styling from the main table model
         self.frozenTableView.setStyleSheet("""
-            QTableView {
-                border: 1px solid #d3d3d3;
-                gridline-color: #d3d3d3;
-                font-family: Segoe UI;
-                font-size: 12px;
-            }
-            QTableView::item {
-                border: 1px solid #d3d3d3;
-            }
-            QTableView::item:selected {
-                background-color: #b0b0b0;
+            QTableView { 
+                border: none;
+                selection-background-color: #999;
             }
         """)
         self.frozenTableView.setSelectionModel(self.selectionModel())
-
+        
+        # Hide all columns except the first
         for col in range(self.model().columnCount()):
             self.frozenTableView.setColumnHidden(col, col != 0)
-
+        
         self.frozenTableView.setColumnWidth(0, self.columnWidth(0))
         self.frozenTableView.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.frozenTableView.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-
+        self.frozenTableView.show()
+        self.frozenTableView.viewport().repaint()
+        
         self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerItem)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerItem)
         self.frozenTableView.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerItem)
-
+        
         self.updateFrozenTableGeometry()
-        self.frozenTableView.show()
-        self.frozenTableView.viewport().repaint()
 
     def updateSectionWidth(self, logicalIndex, oldSize, newSize):
+        """Update the width of the frozen column when resized."""
         if logicalIndex == 0:
             self.frozenTableView.setColumnWidth(0, newSize)
             self.updateFrozenTableGeometry()
             self.frozenTableView.viewport().repaint()
 
     def updateSectionHeight(self, logicalIndex, oldSize, newSize):
+        """Update the height of rows in the frozen table."""
         self.frozenTableView.setRowHeight(logicalIndex, newSize)
         self.frozenTableView.viewport().repaint()
 
     def frozenVerticalScroll(self, value):
+        """Sync main table's vertical scrollbar with frozen table."""
+        self.viewport().stackUnder(self.frozenTableView)
         self.verticalScrollBar().setValue(value)
         self.frozenTableView.viewport().repaint()
         self.viewport().update()
 
     def mainVerticalScroll(self, value):
+        """Sync frozen table's vertical scrollbar with main table."""
+        self.viewport().stackUnder(self.frozenTableView)
         self.frozenTableView.verticalScrollBar().setValue(value)
         self.frozenTableView.viewport().repaint()
         self.viewport().update()
 
     def updateFrozenTableGeometry(self):
+        """Update the geometry of the frozen table view."""
         self.frozenTableView.setGeometry(
             self.verticalHeader().width() + self.frameWidth(),
             self.frameWidth(),
@@ -171,75 +99,93 @@ class FreezeTableWidget(QTableView):
         self.frozenTableView.viewport().repaint()
 
     def resizeEvent(self, event):
+        """Handle resize events to update frozen table geometry."""
         super().resizeEvent(event)
         self.updateFrozenTableGeometry()
         self.frozenTableView.viewport().repaint()
 
     def moveCursor(self, cursorAction, modifiers):
+        """Adjust cursor movement to prevent selection from disappearing behind frozen column."""
         current = super().moveCursor(cursorAction, modifiers)
         if cursorAction == QAbstractItemView.CursorAction.MoveLeft and current.column() > 0:
             visual_x = self.visualRect(current).topLeft().x()
             if visual_x < self.frozenTableView.columnWidth(0):
                 new_value = self.horizontalScrollBar().value() + visual_x - self.frozenTableView.columnWidth(0)
                 self.horizontalScrollBar().setValue(int(new_value))
+        self.frozenTableView.viewport().repaint()
         return current
 
     def scrollTo(self, index, hint=QAbstractItemView.ScrollHint.EnsureVisible):
+        """Scroll to the index, but only if it's not in the frozen column."""
         if index.column() > 0:
             super().scrollTo(index, hint)
         self.frozenTableView.viewport().repaint()
 
 class PivotTableModel(QAbstractTableModel):
+    """Custom table model for pivot table, optimized for large datasets."""
     def __init__(self, pivot_tab, df=None, crm_rows=None):
         super().__init__()
         self.pivot_tab = pivot_tab
         self._df = df if df is not None else pd.DataFrame()
         self._crm_rows = crm_rows if crm_rows is not None else []
+        self._row_info = []
         self._column_widths = {}
+        self._build_row_info()
 
     def set_data(self, df, crm_rows=None):
         self.beginResetModel()
         self._df = df.copy()
         self._crm_rows = crm_rows if crm_rows is not None else []
+        self._build_row_info()
         self.endResetModel()
 
+    def _build_row_info(self):
+        self._row_info = []
+        for row_idx in range(len(self._df)):
+            self._row_info.append({'type': 'pivot', 'index': row_idx})
+            sol_label = self._df.iloc[row_idx]['Solution Label']
+            for grp_idx, (sl, cdata) in enumerate(self._crm_rows):
+                if sl == sol_label:
+                    for sub in range(len(cdata)):
+                        self._row_info.append({'type': 'crm', 'group': grp_idx, 'sub': sub})
+                    break
+
     def rowCount(self, parent=QModelIndex()):
-        return self._df.shape[0] + sum(len(crm_data) for _, crm_data in self._crm_rows)
+        return len(self._row_info)
 
     def columnCount(self, parent=QModelIndex()):
         return self._df.shape[1]
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
-        if not index.isValid() or not (0 <= index.row() < self.rowCount() and 0 <= index.column() < self._df.shape[1]):
+        if not index.isValid() or index.row() >= len(self._row_info):
             return None
 
         row = index.row()
         col = index.column()
         col_name = self._df.columns[col]
-        pivot_row = row
+        info = self._row_info[row]
+
         is_crm_row = False
         is_diff_row = False
         crm_row_data = None
         tags = None
+        pivot_row = row
 
-        current_row = 0
-        for sol_label, crm_data in self._crm_rows:
-            pivot_idx = self._df.index[self._df['Solution Label'] == sol_label].tolist()
-            if not pivot_idx:
-                continue
-            pivot_idx = pivot_idx[0]
-            if current_row <= row < current_row + 1 + len(crm_data):
-                if row == current_row + 1:
-                    is_crm_row = True
-                    crm_row_data = crm_data[0][0]
-                    tags = crm_data[0][1]
-                elif row == current_row + 2:
-                    is_diff_row = True
-                    crm_row_data = crm_data[1][0]
-                    tags = crm_data[1][1]
-                pivot_row = pivot_idx
-                break
-            current_row += 1 + len(crm_data)
+        if info['type'] == 'pivot':
+            pivot_row = info['index']
+        else:
+            grp = info['group']
+            sub = info['sub']
+            _, crm_data = self._crm_rows[grp]
+            if sub == 0:
+                is_crm_row = True
+                crm_row_data = crm_data[0][0]  # CRM row data
+                tags = crm_data[0][1]
+            elif sub == 1:
+                is_diff_row = True
+                crm_row_data = crm_data[1][0]  # Difference row data
+                tags = crm_data[1][1]
+            pivot_row = self._df.index[self._df['Solution Label'] == self._crm_rows[grp][0]].tolist()[0]
 
         if role == Qt.ItemDataRole.DisplayRole:
             dec = int(self.pivot_tab.decimal_places.currentText())
@@ -257,14 +203,14 @@ class PivotTableModel(QAbstractTableModel):
 
         elif role == Qt.ItemDataRole.BackgroundRole:
             if is_crm_row:
-                return QColor("#FFF5E4")  # رنگ برای سطرهای Check CRM
+                return QColor("#FFF5E4")  # Light yellow for CRM rows
             elif is_diff_row and tags:
                 if tags[col] == "in_range":
-                    return QColor("#ECFFC4")
+                    return QColor("#ECFFC4")  # Green for in-range
                 elif tags[col] == "out_range":
-                    return QColor("#FFCCCC")
-                return QColor("#E6E6FA")
-            return QColor("#f0f0f0") if pivot_row % 2 == 0 else QColor("white")
+                    return QColor("#FFCCCC")  # Red for out-of-range
+                return QColor("#E6E6FA")  # Lavender for invalid/empty
+            return QColor("#f9f9f9") if pivot_row % 2 == 0 else QColor("white")
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:
             return Qt.AlignmentFlag.AlignLeft if col_name == "Solution Label" else Qt.AlignmentFlag.AlignCenter
@@ -282,6 +228,7 @@ class PivotTableModel(QAbstractTableModel):
         self._column_widths[col] = width
 
 class FilterDialog(QDialog):
+    """Dialog for row/column filtering."""
     def __init__(self, parent, title, is_row_filter=True):
         super().__init__(parent)
         self.parent = parent
@@ -379,6 +326,7 @@ class FilterDialog(QDialog):
         self.parent.update_pivot_display()
 
 class PivotPlotDialog(QDialog):
+    """Dialog for plotting CRM data with a separate difference plot using PyQt6 QtCharts."""
     def __init__(self, parent, selected_element):
         super().__init__(parent)
         self.parent = parent
@@ -703,6 +651,7 @@ class PivotPlotDialog(QDialog):
         self.update_plot()
 
 class PivotTab(QWidget):
+    """PivotTab with inline CRM rows, difference coloring, and plot visualization."""
     oxide_factors = {
         'Si': ('SiO2', 60.0843 / 28.0855),
         'Ti': ('TiO2', 79.8658 / 47.867),
@@ -893,50 +842,45 @@ class PivotTab(QWidget):
         if self.pivot_data is None or self.pivot_data.empty:
             self.status_label.setText("No data loaded")
             self.table_view.setModel(None)
+            self.table_view.frozenTableView.setModel(None)
             return
 
-        self.table_view.setUpdatesEnabled(False)
-        try:
-            df = self.pivot_data.copy()
-            s = self.search_var.text().strip().lower()
-            if s:
-                mask = df.apply(lambda r: r.astype(str).str.lower().str.contains(s, na=False).any(), axis=1)
-                df = df[mask]
+        df = self.pivot_data.copy()
+        s = self.search_var.text().strip().lower()
+        if s:
+            mask = df.apply(lambda r: r.astype(str).str.lower().str.contains(s, na=False).any(), axis=1)
+            df = df[mask]
 
-            rf = self.row_filter_field.currentText()
-            if rf and rf in self.row_filter_values:
-                selected = [k for k, v in self.row_filter_values[rf].items() if v.isChecked()]
-                if selected:
-                    df = df[df[rf].isin(selected)]
+        rf = self.row_filter_field.currentText()
+        if rf and rf in self.row_filter_values:
+            selected = [k for k, v in self.row_filter_values[rf].items() if v.isChecked()]
+            if selected:
+                df = df[df[rf].isin(selected)]
 
-            cf = self.column_filter_field.currentText()
-            if cf and cf in self.column_filter_values:
-                selected_cols = [k for k, v in self.column_filter_values[cf].items() if v.isChecked()]
-                if selected_cols:
-                    keep = ['Solution Label'] + [c for c in self.element_order if c in selected_cols and c in df.columns]
-                    df = df[keep]
+        cf = self.column_filter_field.currentText()
+        if cf and cf in self.column_filter_values:
+            selected_cols = [k for k, v in self.column_filter_values[cf].items() if v.isChecked()]
+            if selected_cols:
+                keep = ['Solution Label'] + [c for c in self.element_order if c in selected_cols and c in df.columns]
+                df = df[keep]
 
-            df = df.reset_index(drop=True)
-            self.current_view_df = df
-            self._inline_crm_rows_display = self._build_crm_row_lists_for_columns(list(df.columns))
+        df = df.reset_index(drop=True)
+        self.current_view_df = df
+        self._inline_crm_rows_display = self._build_crm_row_lists_for_columns(list(df.columns))
 
-            crm_rows = []
-            for sol_label in df['Solution Label']:
-                if sol_label in self._inline_crm_rows_display:
-                    crm_rows.append((sol_label, self._inline_crm_rows_display[sol_label]))
+        # Prepare CRM rows for display
+        crm_rows = []
+        for sol_label in df['Solution Label']:
+            if sol_label in self._inline_crm_rows_display:
+                crm_rows.append((sol_label, self._inline_crm_rows_display[sol_label]))
 
-            model = PivotTableModel(self, df, crm_rows)
-            self.table_view.setModel(model)
-            self.table_view.frozenTableView.setModel(model)  # مجددا تنظیم مدل برای فریز شده
-            self.table_view.model().layoutChanged.emit()  # سیگنال تغییر布局 برای تازه‌سازی
-            self.table_view.frozenTableView.model().layoutChanged.emit()  # سیگنال برای فریز شده
-            for col, width in self.column_widths.items():
-                self.table_view.horizontalHeader().resizeSection(col, width)
-            self.status_label.setText("Data loaded successfully")
-        finally:
-            self.table_view.setUpdatesEnabled(True)
-            self.table_view.viewport().update()
-            self.table_view.frozenTableView.viewport().repaint()  # اطمینان از رندر فریز شده
+        model = PivotTableModel(self, df, crm_rows)
+        self.table_view.setModel(model)
+        self.table_view.frozenTableView.setModel(model)
+        model.layoutChanged.emit()
+        for col, width in self.column_widths.items():
+            self.table_view.horizontalHeader().resizeSection(col, width)
+        self.status_label.setText("Data loaded successfully")
 
     def _build_crm_row_lists_for_columns(self, columns):
         crm_display = {}
@@ -946,10 +890,6 @@ class PivotTab(QWidget):
             max_diff = float(self.diff_max.text())
         except ValueError:
             min_diff, max_diff = -12, 12
-
-        cache_key = f"{dec}_{min_diff}_{max_diff}"
-        if cache_key in self.cached_formatted:
-            return self.cached_formatted[cache_key]
 
         has_act_vol = 'Act Vol' in self.original_df.columns if self.original_df is not None else False
         has_act_wg = 'Act Wgt' in self.original_df.columns if self.original_df is not None else False
@@ -1057,10 +997,10 @@ class PivotTab(QWidget):
                             diff_tags.append("diff")
                 crm_display[sol_label].append((diff_row_list, diff_tags))
 
-        self.cached_formatted[cache_key] = crm_display
         return crm_display
 
     def calculate_dynamic_range(self, value):
+        try:
             value = float(value)
             if value < 100:
                 return value * 0.2
@@ -1068,8 +1008,8 @@ class PivotTab(QWidget):
                 return value * 0.1
             else:
                 return value * 0.05
+        except (ValueError, TypeError):
             return 0
-    
 
     def on_cell_double_click(self, index):
         if not index.isValid() or self.current_view_df is None:
@@ -1081,6 +1021,7 @@ class PivotTab(QWidget):
             return
 
         try:
+            # Adjust for CRM and difference rows
             pivot_row = row
             current_row = 0
             for sol_label, crm_data in self._inline_crm_rows_display.items():
@@ -1090,7 +1031,7 @@ class PivotTab(QWidget):
                 pivot_idx = pivot_idx[0]
                 if current_row <= row < current_row + len(crm_data) + 1:
                     if row == current_row + 1 or row == current_row + 2:
-                        return
+                        return  # Skip CRM or difference rows
                     row = pivot_idx
                     break
                 current_row += 1 + len(crm_data)
@@ -1188,7 +1129,7 @@ class PivotTab(QWidget):
 
             header_fill = PatternFill(start_color="90EE90", end_color="90EE90", fill_type="solid")
             first_col_fill = PatternFill(start_color="FFF5E4", end_color="FFF5E4", fill_type="solid")
-            odd_fill = PatternFill(start_color="f0f0f0", end_color="f0f0f0", fill_type="solid")
+            odd_fill = PatternFill(start_color="f5f5f5", end_color="f5f5f5", fill_type="solid")
             even_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
             diff_in_range_fill = PatternFill(start_color="ECFFC4", end_color="ECFFC4", fill_type="solid")
             diff_out_range_fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
@@ -1285,50 +1226,79 @@ class PivotTab(QWidget):
             QMessageBox.warning(self, "Warning", "No pivot data available!")
             return
 
-        self.progress = QProgressDialog("Checking CRM...", "Cancel", 0, 0, self)
-        self.progress.setWindowModality(Qt.WindowModality.WindowModal)
-        self.progress.setCancelButton(None)
-        self.progress.show()
+        try:
+            conn = self.app.crm_tab.conn
+            if conn is None:
+                self.app.crm_tab.init_db()
+                conn = self.app.crm_tab.conn
+                if conn is None:
+                    QMessageBox.warning(self, "Error", "Failed to connect to CRM database!")
+                    return
 
-        self.thread = QThread()
-        self.worker = CRMWorker(
-            pivot_data=self.pivot_data,
-            element_order=self.element_order,
-            decimal_places=self.decimal_places.currentText(),
-            use_int_var=self.use_int_var.isChecked(),
-            oxide_factors=self.oxide_factors,
-            excel_file='data crm.xlsx'
-        )
-        self.worker.moveToThread(self.thread)
+            crm_rows = self.pivot_data[self.pivot_data['Solution Label'].str.contains('CRM|par', case=False, na=False)].copy()
+            if crm_rows.empty:
+                QMessageBox.information(self, "Info", "No CRM or par rows found in pivot data!")
+                return
 
-        self.worker.finished.connect(self.on_check_rm_finished)
-        self.worker.error.connect(self.on_check_rm_error)
-        self.thread.started.connect(self.worker.run)
-        self.thread.start()
-        self.status_label.setText("Checking CRM... Please wait.")
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(crm)")
+            cols = [x[1] for x in cursor.fetchall()]
+            required = {'CRM ID', 'Element', 'Sort Grade', 'Analysis Method'}
+            if not required.issubset(cols):
+                QMessageBox.warning(self, "Error", "CRM table missing required columns!")
+                return
 
-    def on_check_rm_finished(self, inline_crm_rows, included_crms):
-        self.progress.close()
-        self._inline_crm_rows = inline_crm_rows
-        self.included_crms = included_crms
+            dec = int(self.decimal_places.currentText())
+            self._inline_crm_rows.clear()
+            self.included_crms.clear()
+            for _, row in crm_rows.iterrows():
+                label = row['Solution Label']
+                m = re.search(r'\d+', str(label))
+                if not m:
+                    continue
+                crm_id_string = f"OREAS {m.group()}"
+                analysis_method = '4-Acid Digestion' if 'CRM' in str(label).upper() else 'Aqua Regia Digestion'
 
-        if not self._inline_crm_rows:
-            QMessageBox.information(self, "Info", "No matching CRM elements found for comparison!")
-            self.status_label.setText("No matching CRM elements found.")
-        else:
+                cursor.execute(
+                    "SELECT [Element], [Sort Grade] FROM crm WHERE [CRM ID] = ? AND [Analysis Method] = ?",
+                    (crm_id_string, analysis_method)
+                )
+                crm_data = cursor.fetchall()
+                if not crm_data:
+                    continue
+
+                crm_dict = {}
+                for element_full, sort_grade in crm_data:
+                    symbol = element_full.split(',')[-1].strip() if ',' in element_full else element_full.split()[-1].strip()
+                    try:
+                        crm_dict[symbol] = float(sort_grade)
+                    except (ValueError, TypeError):
+                        pass
+
+                crm_values = {'Solution Label': crm_id_string}
+                for col in self.element_order:
+                    if col == 'Solution Label' or col not in self.pivot_data.columns:
+                        continue
+                    element_symbol = col.split(' ')[0].split('_')[0]
+                    if element_symbol in crm_dict:
+                        if element_symbol in self.oxide_factors:
+                            _, factor = self.oxide_factors[element_symbol]
+                            crm_values[col] = crm_dict[element_symbol] * factor
+                        else:
+                            crm_values[col] = crm_dict[element_symbol]
+                if len(crm_values) > 1:
+                    self._inline_crm_rows.setdefault(label, []).append(crm_values)
+                    self.included_crms[label] = QCheckBox(label, checked=True)
+
+            if not self._inline_crm_rows:
+                QMessageBox.information(self, "Info", "No matching CRM elements found for comparison!")
+                return
+
             self._inline_crm_rows_display = self._build_crm_row_lists_for_columns(list(self.pivot_data.columns))
             self.update_pivot_display()
-            self.status_label.setText("CRM check completed")
 
-        self.thread.quit()
-        self.thread.wait()
-
-    def on_check_rm_error(self, error_msg):
-        self.progress.close()
-        QMessageBox.warning(self, "Error", error_msg)
-        self.status_label.setText("Error during CRM check.")
-        self.thread.quit()
-        self.thread.wait()
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to check RM: {str(e)}")
 
     def correct_pivot_crm(self):
         if self.pivot_data is None or self.pivot_data.empty:
