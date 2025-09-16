@@ -365,7 +365,7 @@ class PivotPlotDialog(QDialog):
         control_frame.addWidget(self.max_correction_percent)
         
         correct_btn = QPushButton("Correct Pivot CRM")
-        correct_btn.clicked.connect(self.parent.correct_pivot_crm)
+        correct_btn.clicked.connect(self.correct_crm_callback)
         control_frame.addWidget(correct_btn)
         
         select_crms_btn = QPushButton("Select CRMs")
@@ -384,6 +384,10 @@ class PivotPlotDialog(QDialog):
         self.diff_chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
         layout.addWidget(self.diff_chart_view)
         
+        self.update_plot()
+
+    def correct_crm_callback(self):
+        self.parent.correct_pivot_crm()
         self.update_plot()
 
     def update_plot(self):
@@ -508,15 +512,22 @@ class PivotPlotDialog(QDialog):
                 series.attachAxis(axis_x)
                 series.attachAxis(axis_y)
                 if self.show_range.isChecked():
-                    range_series = QLineSeries()
-                    range_series.setName("Check CRM Range")
-                    range_series.setPen(QPen(QColor("red"), 1, Qt.PenStyle.DotLine))
-                    for i, (lower, upper) in enumerate(zip(range_lower, range_upper)):
-                        range_series.append(i, lower)
-                        range_series.append(i, upper)
-                    self.chart.addSeries(range_series)
-                    range_series.attachAxis(axis_x)
-                    range_series.attachAxis(axis_y)
+                    range_series_lower = QLineSeries()
+                    range_series_lower.setName("Check CRM Range Lower")
+                    range_series_lower.setPen(QPen(QColor("red"), 1, Qt.PenStyle.DotLine))
+                    range_series_upper = QLineSeries()
+                    range_series_upper.setName("Check CRM Range Upper")
+                    range_series_upper.setPen(QPen(QColor("red"), 1, Qt.PenStyle.DotLine))
+                    for i, lower in enumerate(range_lower):
+                        range_series_lower.append(i, lower)
+                    for i, upper in enumerate(range_upper):
+                        range_series_upper.append(i, upper)
+                    self.chart.addSeries(range_series_lower)
+                    self.chart.addSeries(range_series_upper)
+                    range_series_lower.attachAxis(axis_x)
+                    range_series_lower.attachAxis(axis_y)
+                    range_series_upper.attachAxis(axis_x)
+                    range_series_upper.attachAxis(axis_y)
                 plotted = True
 
             if self.show_pivot_crm.isChecked() and any(v != 0 for v in crm_pivot_values):
@@ -697,6 +708,7 @@ class PivotTab(QWidget):
         self._inline_crm_rows = {}
         self._inline_crm_rows_display = {}
         self._crm_inserted_for_index = set()
+        self.current_plot_dialog = None
         self.search_var = QLineEdit()
         self.row_filter_field = QComboBox()
         self.column_filter_field = QComboBox()
@@ -1330,28 +1342,28 @@ class PivotTab(QWidget):
                 pivot_val = pivot_row.iloc[0][selected_element]
                 for row_data, _ in crm_rows:
                     if isinstance(row_data, list) and row_data and row_data[0].endswith("CRM"):
-                        val = row_data[self.pivot_data.columns.get_loc(selected_element)] if self.selected_element in self.pivot_data.columns else ""
+                        val = row_data[self.pivot_data.columns.get_loc(selected_element)] if selected_element in self.pivot_data.columns else ""
                         if val and val.strip() and pd.notna(pivot_val):
                             try:
                                 check_val = float(val)
-                                pivot_val = float(pivot_val)
+                                pivot_val_float = float(pivot_val)
                                 range_val = self.calculate_dynamic_range(check_val)
                                 lower = check_val - range_val
                                 upper = check_val + range_val
-                                if pivot_val < lower:
-                                    ratio = lower / pivot_val if pivot_val != 0 else float('inf')
+                                if pivot_val_float < lower:
+                                    ratio = lower / pivot_val_float if pivot_val_float != 0 else float('inf')
                                     correction = abs(ratio - 1)
                                     if correction <= max_corr:
                                         ratios.append(ratio)
-                                        self.pivot_data.loc[self.pivot_data['Solution Label'] == sol_label, selected_element] = pivot_val * ratio
+                                        self.pivot_data.loc[self.pivot_data['Solution Label'] == sol_label, selected_element] = pivot_val_float * ratio
                                     else:
                                         problematic_labels.append(sol_label)
-                                elif pivot_val > upper:
-                                    ratio = upper / pivot_val if pivot_val != 0 else float('inf')
+                                elif pivot_val_float > upper:
+                                    ratio = upper / pivot_val_float if pivot_val_float != 0 else float('inf')
                                     correction = abs(ratio - 1)
                                     if correction <= max_corr:
                                         ratios.append(ratio)
-                                        self.pivot_data.loc[self.pivot_data['Solution Label'] == sol_label, selected_element] = pivot_val * ratio
+                                        self.pivot_data.loc[self.pivot_data['Solution Label'] == sol_label, selected_element] = pivot_val_float * ratio
                                     else:
                                         problematic_labels.append(sol_label)
                             except ValueError:
@@ -1369,6 +1381,8 @@ class PivotTab(QWidget):
                 lambda x: x * avg_ratio if pd.notna(x) else x
             )
             self.update_pivot_display()
+            if self.current_plot_dialog and self.current_plot_dialog.isVisible():
+                self.current_plot_dialog.update_plot()
             QMessageBox.information(self, "Success", f"Pivot CRM corrected for {selected_element} with average ratio={avg_ratio:.3f}")
 
         except Exception as e:
@@ -1388,4 +1402,5 @@ class PivotTab(QWidget):
         if not self.included_crms:
             self.included_crms = {label: QCheckBox(label, checked=True) for label in crm_labels}
 
-        PivotPlotDialog(self, selected_element).exec()
+        self.current_plot_dialog = PivotPlotDialog(self, selected_element)
+        self.current_plot_dialog.exec()
