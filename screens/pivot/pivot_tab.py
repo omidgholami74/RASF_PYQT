@@ -3,7 +3,7 @@ import platform
 import re
 import pandas as pd
 import numpy as np
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, QTableView,QAbstractItemView, 
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, QTableView, QAbstractItemView, 
                              QDialog, QCheckBox, QLineEdit, QFrame, QTreeView, QFileDialog, QMessageBox, QHeaderView)
 from PyQt6.QtCore import Qt, QSortFilterProxyModel, QAbstractTableModel, QModelIndex
 from PyQt6.QtGui import QFont, QColor, QStandardItemModel, QStandardItem, QPainter, QPen
@@ -24,20 +24,17 @@ class FreezeTableWidget(QTableView):
         self.frozenTableView.setModel(model)
         self.init()
 
-        # Connect headers and scrollbars
         self.horizontalHeader().sectionResized.connect(self.updateSectionWidth)
         self.verticalHeader().sectionResized.connect(self.updateSectionHeight)
         self.frozenTableView.verticalScrollBar().valueChanged.connect(self.frozenVerticalScroll)
         self.verticalScrollBar().valueChanged.connect(self.mainVerticalScroll)
 
     def init(self):
-        """Initialize the frozen table view for the first column."""
         self.frozenTableView.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.frozenTableView.verticalHeader().hide()
         self.frozenTableView.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         self.viewport().stackUnder(self.frozenTableView)
         
-        # Inherit styling from the main table model
         self.frozenTableView.setStyleSheet("""
             QTableView { 
                 border: none;
@@ -46,7 +43,6 @@ class FreezeTableWidget(QTableView):
         """)
         self.frozenTableView.setSelectionModel(self.selectionModel())
         
-        # Hide all columns except the first
         for col in range(self.model().columnCount()):
             self.frozenTableView.setColumnHidden(col, col != 0)
         
@@ -63,33 +59,28 @@ class FreezeTableWidget(QTableView):
         self.updateFrozenTableGeometry()
 
     def updateSectionWidth(self, logicalIndex, oldSize, newSize):
-        """Update the width of the frozen column when resized."""
         if logicalIndex == 0:
             self.frozenTableView.setColumnWidth(0, newSize)
             self.updateFrozenTableGeometry()
             self.frozenTableView.viewport().repaint()
 
     def updateSectionHeight(self, logicalIndex, oldSize, newSize):
-        """Update the height of rows in the frozen table."""
         self.frozenTableView.setRowHeight(logicalIndex, newSize)
         self.frozenTableView.viewport().repaint()
 
     def frozenVerticalScroll(self, value):
-        """Sync main table's vertical scrollbar with frozen table."""
         self.viewport().stackUnder(self.frozenTableView)
         self.verticalScrollBar().setValue(value)
         self.frozenTableView.viewport().repaint()
         self.viewport().update()
 
     def mainVerticalScroll(self, value):
-        """Sync frozen table's vertical scrollbar with main table."""
         self.viewport().stackUnder(self.frozenTableView)
         self.frozenTableView.verticalScrollBar().setValue(value)
         self.frozenTableView.viewport().repaint()
         self.viewport().update()
 
     def updateFrozenTableGeometry(self):
-        """Update the geometry of the frozen table view."""
         self.frozenTableView.setGeometry(
             self.verticalHeader().width() + self.frameWidth(),
             self.frameWidth(),
@@ -99,13 +90,11 @@ class FreezeTableWidget(QTableView):
         self.frozenTableView.viewport().repaint()
 
     def resizeEvent(self, event):
-        """Handle resize events to update frozen table geometry."""
         super().resizeEvent(event)
         self.updateFrozenTableGeometry()
         self.frozenTableView.viewport().repaint()
 
     def moveCursor(self, cursorAction, modifiers):
-        """Adjust cursor movement to prevent selection from disappearing behind frozen column."""
         current = super().moveCursor(cursorAction, modifiers)
         if cursorAction == QAbstractItemView.CursorAction.MoveLeft and current.column() > 0:
             visual_x = self.visualRect(current).topLeft().x()
@@ -116,7 +105,6 @@ class FreezeTableWidget(QTableView):
         return current
 
     def scrollTo(self, index, hint=QAbstractItemView.ScrollHint.EnsureVisible):
-        """Scroll to the index, but only if it's not in the frozen column."""
         if index.column() > 0:
             super().scrollTo(index, hint)
         self.frozenTableView.viewport().repaint()
@@ -179,11 +167,11 @@ class PivotTableModel(QAbstractTableModel):
             _, crm_data = self._crm_rows[grp]
             if sub == 0:
                 is_crm_row = True
-                crm_row_data = crm_data[0][0]  # CRM row data
+                crm_row_data = crm_data[0][0]
                 tags = crm_data[0][1]
             elif sub == 1:
                 is_diff_row = True
-                crm_row_data = crm_data[1][0]  # Difference row data
+                crm_row_data = crm_data[1][0]
                 tags = crm_data[1][1]
             pivot_row = self._df.index[self._df['Solution Label'] == self._crm_rows[grp][0]].tolist()[0]
 
@@ -196,6 +184,9 @@ class PivotTableModel(QAbstractTableModel):
                 value = self._df.iloc[pivot_row, col]
                 if col_name != "Solution Label" and pd.notna(value):
                     try:
+                        if self.pivot_tab.use_oxide_var.isChecked() and col_name in self.pivot_tab.oxide_factors:
+                            _, factor = self.pivot_tab.oxide_factors[col_name]
+                            value = float(value) * factor
                         return f"{float(value):.{dec}f}"
                     except (ValueError, TypeError):
                         return "" if pd.isna(value) else str(value)
@@ -203,13 +194,13 @@ class PivotTableModel(QAbstractTableModel):
 
         elif role == Qt.ItemDataRole.BackgroundRole:
             if is_crm_row:
-                return QColor("#FFF5E4")  # Light yellow for CRM rows
+                return QColor("#FFF5E4")
             elif is_diff_row and tags:
                 if tags[col] == "in_range":
-                    return QColor("#ECFFC4")  # Green for in-range
+                    return QColor("#ECFFC4")
                 elif tags[col] == "out_range":
-                    return QColor("#FFCCCC")  # Red for out-of-range
-                return QColor("#E6E6FA")  # Lavender for invalid/empty
+                    return QColor("#FFCCCC")
+                return QColor("#E6E6FA")
             return QColor("#f9f9f9") if pivot_row % 2 == 0 else QColor("white")
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:
@@ -269,7 +260,7 @@ class FilterDialog(QDialog):
         button_layout.addWidget(deselect_all_btn)
         
         apply_btn = QPushButton("Apply")
-        apply_btn.clicked.connect(self.accept)
+        apply_btn.clicked.connect(self.apply_filters)
         button_layout.addWidget(apply_btn)
         
         close_btn = QPushButton("Close")
@@ -288,17 +279,18 @@ class FilterDialog(QDialog):
             return
         
         var_dict = self.parent.row_filter_values if self.is_row_filter else self.parent.column_filter_values
-        uniques = self.parent.solution_label_order if self.is_row_filter and field == "Solution Label" else \
-                  sorted(self.parent.pivot_data[field].astype(str).unique()) if field in self.parent.pivot_data.columns else \
-                  self.parent.element_order
+        uniques = (self.parent.solution_label_order if self.is_row_filter and field == "Solution Label" else
+                  sorted(self.parent.pivot_data[field].astype(str).unique()) if field in self.parent.pivot_data.columns else
+                  self.parent.element_order)
+        
         if field not in var_dict:
-            var_dict[field] = {v: QCheckBox(v, checked=True) for v in uniques}
+            var_dict[field] = {v: True for v in uniques}
         
         for val in uniques:
-            value_item = QStandardItem(val)
+            value_item = QStandardItem(str(val))
             check_item = QStandardItem()
             check_item.setCheckable(True)
-            check_item.setCheckState(Qt.CheckState.Checked if var_dict[field][val].isChecked() else Qt.CheckState.Unchecked)
+            check_item.setCheckState(Qt.CheckState.Checked if var_dict[field].get(val, True) else Qt.CheckState.Unchecked)
             self.model.appendRow([value_item, check_item])
         
         self.tree_view.clicked.connect(self.toggle_check)
@@ -309,21 +301,22 @@ class FilterDialog(QDialog):
         val = self.model.item(index.row(), 0).text()
         field = self.field_combo.currentText()
         var_dict = self.parent.row_filter_values if self.is_row_filter else self.parent.column_filter_values
-        if field in var_dict and val in var_dict[field]:
-            var_dict[field][val].setChecked(not var_dict[field][val].isChecked())
-            self.model.item(index.row(), 1).setCheckState(
-                Qt.CheckState.Checked if var_dict[field][val].isChecked() else Qt.CheckState.Unchecked)
-            self.parent.update_pivot_display()
+        var_dict[field][val] = not var_dict[field].get(val, True)
+        self.model.item(index.row(), 1).setCheckState(
+            Qt.CheckState.Checked if var_dict[field][val] else Qt.CheckState.Unchecked)
 
     def set_all_checks(self, value):
         field = self.field_combo.currentText()
         var_dict = self.parent.row_filter_values if self.is_row_filter else self.parent.column_filter_values
         if field not in var_dict:
             return
-        for val, checkbox in var_dict[field].items():
-            checkbox.setChecked(value)
+        for val in var_dict[field]:
+            var_dict[field][val] = value
         self.update_tree()
+
+    def apply_filters(self):
         self.parent.update_pivot_display()
+        self.accept()
 
 class PivotPlotDialog(QDialog):
     """Dialog for plotting CRM data with a separate difference plot using PyQt6 QtCharts."""
@@ -426,7 +419,6 @@ class PivotPlotDialog(QDialog):
             crm_display_values = [pair[1] for pair in valid_pairs]
             crm_pivot_values = [pair[2] for pair in valid_pairs]
             labels = [pair[0] for pair in valid_pairs]
-            num_points = len(valid_pairs)
 
             if not valid_pairs:
                 pivot_data = self.parent.pivot_data[self.parent.pivot_data['Solution Label'].str.contains('CRM|par', case=False, na=False)]
@@ -715,6 +707,7 @@ class PivotTab(QWidget):
         self.element_selector = QComboBox()
         self.decimal_places = QComboBox()
         self.use_int_var = QCheckBox("Use Int")
+        self.use_oxide_var = QCheckBox("Use Oxide")
         self.diff_min = QLineEdit("-12")
         self.diff_max = QLineEdit("12")
         self.show_check_crm = QCheckBox("Show Check CRM", checked=True)
@@ -739,6 +732,9 @@ class PivotTab(QWidget):
         
         self.use_int_var.toggled.connect(self.create_pivot)
         control_layout.addWidget(self.use_int_var)
+        
+        self.use_oxide_var.toggled.connect(self.create_pivot)
+        control_layout.addWidget(self.use_oxide_var)
         
         control_layout.addWidget(QLabel("Diff Range (%):"))
         self.diff_min.textChanged.connect(self.validate_diff_range)
@@ -840,11 +836,19 @@ class PivotTab(QWidget):
                 how='left'
             ).sort_values('original_index').drop(columns=['original_index', 'unique_id']).drop_duplicates()
             
+            if self.use_oxide_var.isChecked():
+                for col in pivot_df.columns:
+                    if col != 'Solution Label' and col in self.oxide_factors:
+                        _, factor = self.oxide_factors[col]
+                        pivot_df[col] = pd.to_numeric(pivot_df[col], errors='coerce') * factor
+            
             self.pivot_data = pivot_df
             self.column_widths.clear()
             self.cached_formatted.clear()
             self._inline_crm_rows.clear()
             self._inline_crm_rows_display.clear()
+            self.row_filter_values.clear()
+            self.column_filter_values.clear()
             self.update_pivot_display()
 
         except Exception as e:
@@ -863,24 +867,23 @@ class PivotTab(QWidget):
             mask = df.apply(lambda r: r.astype(str).str.lower().str.contains(s, na=False).any(), axis=1)
             df = df[mask]
 
-        rf = self.row_filter_field.currentText()
-        if rf and rf in self.row_filter_values:
-            selected = [k for k, v in self.row_filter_values[rf].items() if v.isChecked()]
-            if selected:
-                df = df[df[rf].isin(selected)]
+        for field, values in self.row_filter_values.items():
+            if field in df.columns:
+                selected = [k for k, v in values.items() if v]
+                if selected:
+                    df = df[df[field].isin(selected)]
 
-        cf = self.column_filter_field.currentText()
-        if cf and cf in self.column_filter_values:
-            selected_cols = [k for k, v in self.column_filter_values[cf].items() if v.isChecked()]
-            if selected_cols:
-                keep = ['Solution Label'] + [c for c in self.element_order if c in selected_cols and c in df.columns]
-                df = df[keep]
+        selected_cols = ['Solution Label']
+        for field, values in self.column_filter_values.items():
+            if field == 'Element':
+                selected_cols.extend([k for k, v in values.items() if v and k in df.columns])
+        if len(selected_cols) > 1:
+            df = df[selected_cols]
 
         df = df.reset_index(drop=True)
         self.current_view_df = df
         self._inline_crm_rows_display = self._build_crm_row_lists_for_columns(list(df.columns))
 
-        # Prepare CRM rows for display
         crm_rows = []
         for sol_label in df['Solution Label']:
             if sol_label in self._inline_crm_rows_display:
@@ -951,14 +954,14 @@ class PivotTab(QWidget):
                                 coeff_2 = params['Coeff 2']
                                 if self.use_int_var.isChecked() and act_vol != 0 and act_wg != 0:
                                     int_value = coeff_2 * (float(val) / (act_vol / act_wg)) + coeff_1
-                                    if element_symbol in self.oxide_factors:
+                                    if element_symbol in self.oxide_factors and self.use_oxide_var.isChecked():
                                         _, factor = self.oxide_factors[element_symbol]
                                         oxide_int_value = int_value * factor
                                         crm_row_list.append(f"{oxide_int_value:.{dec}f}")
                                     else:
                                         crm_row_list.append(f"{int_value:.{dec}f}")
                                 else:
-                                    if element_symbol in self.oxide_factors:
+                                    if element_symbol in self.oxide_factors and self.use_oxide_var.isChecked():
                                         _, factor = self.oxide_factors[element_symbol]
                                         oxide_val = float(val) * factor
                                         crm_row_list.append(f"{oxide_val:.{dec}f}")
@@ -988,12 +991,16 @@ class PivotTab(QWidget):
                                 coeff_1 = params['Coeff 1']
                                 coeff_2 = params['Coeff 2']
                                 pivot_val = float(pivot_val)
-                                if element_symbol in self.oxide_factors:
+                                if element_symbol in self.oxide_factors and self.use_oxide_var.isChecked():
                                     _, pivot_factor = self.oxide_factors[element_symbol]
                                     pivot_val *= pivot_factor
                                 if self.use_int_var.isChecked() and act_vol != 0 and act_wg != 0:
                                     crm_val = coeff_2 * (float(crm_val) / (act_vol / act_wg)) + coeff_1
-                                crm_val = float(crm_val)
+                                if element_symbol in self.oxide_factors and self.use_oxide_var.isChecked():
+                                    _, crm_factor = self.oxide_factors[element_symbol]
+                                    crm_val = float(crm_val) * crm_factor
+                                else:
+                                    crm_val = float(crm_val)
                                 if crm_val != 0:
                                     diff = ((crm_val - pivot_val) / crm_val) * 100
                                     diff_row_list.append(f"{diff:.{dec}f}")
@@ -1033,7 +1040,6 @@ class PivotTab(QWidget):
             return
 
         try:
-            # Adjust for CRM and difference rows
             pivot_row = row
             current_row = 0
             for sol_label, crm_data in self._inline_crm_rows_display.items():
@@ -1043,7 +1049,7 @@ class PivotTab(QWidget):
                 pivot_idx = pivot_idx[0]
                 if current_row <= row < current_row + len(crm_data) + 1:
                     if row == current_row + 1 or row == current_row + 2:
-                        return  # Skip CRM or difference rows
+                        return
                     row = pivot_idx
                     break
                 current_row += 1 + len(crm_data)
@@ -1067,7 +1073,7 @@ class PivotTab(QWidget):
                 f"DF: {self.format_value(r.get('DF', 'N/A'))}",
                 f"Concentration: {self.format_value(value)}"
             ]
-            if element.split()[0] in self.oxide_factors:
+            if element.split()[0] in self.oxide_factors and self.use_oxide_var.isChecked():
                 formula, factor = self.oxide_factors[element.split()[0]]
                 try:
                     oxide_value = float(value) * factor
@@ -1100,13 +1106,15 @@ class PivotTab(QWidget):
         if self.pivot_data is None:
             QMessageBox.warning(self, "Warning", "No data to filter!")
             return
-        FilterDialog(self, "Row Filter", is_row_filter=True).exec()
+        dialog = FilterDialog(self, "Row Filter", is_row_filter=True)
+        dialog.exec()
 
     def open_column_filter_window(self):
         if self.pivot_data is None:
             QMessageBox.warning(self, "Warning", "No data to filter!")
             return
-        FilterDialog(self, "Column Filter", is_row_filter=False).exec()
+        dialog = FilterDialog(self, "Column Filter", is_row_filter=False)
+        dialog.exec()
 
     def export_pivot(self):
         if self.pivot_data is None or self.pivot_data.empty:
@@ -1115,18 +1123,18 @@ class PivotTab(QWidget):
 
         try:
             filtered = self.pivot_data.copy()
-            rf = self.row_filter_field.currentText()
-            if rf and rf in self.row_filter_values:
-                selected = [k for k, v in self.row_filter_values[rf].items() if v.isChecked()]
-                if selected:
-                    filtered = filtered[filtered[rf].isin(selected)]
+            for field, values in self.row_filter_values.items():
+                if field in filtered.columns:
+                    selected = [k for k, v in values.items() if v]
+                    if selected:
+                        filtered = filtered[filtered[field].isin(selected)]
 
-            cf = self.column_filter_field.currentText()
-            if cf and cf in self.column_filter_values:
-                selected_cols = [k for k, v in self.column_filter_values[cf].items() if v.isChecked()]
-                if selected_cols:
-                    keep = ['Solution Label'] + [c for c in self.element_order if c in selected_cols and c in filtered.columns]
-                    filtered = filtered[keep]
+            selected_cols = ['Solution Label']
+            for field, values in self.column_filter_values.items():
+                if field == 'Element':
+                    selected_cols.extend([k for k, v in values.items() if v and k in filtered.columns])
+            if len(selected_cols) > 1:
+                filtered = filtered[selected_cols]
 
             filtered['Solution Label'] = pd.Categorical(filtered['Solution Label'], categories=self.solution_label_order, ordered=True)
             filtered = filtered.sort_values('Solution Label').reset_index(drop=True)
@@ -1226,6 +1234,8 @@ class PivotTab(QWidget):
         self.original_df = None
         self._inline_crm_rows.clear()
         self._inline_crm_rows_display.clear()
+        self.row_filter_values.clear()
+        self.column_filter_values.clear()
 
     def clear_inline_crm(self):
         self._inline_crm_rows.clear()
@@ -1293,7 +1303,7 @@ class PivotTab(QWidget):
                         continue
                     element_symbol = col.split(' ')[0].split('_')[0]
                     if element_symbol in crm_dict:
-                        if element_symbol in self.oxide_factors:
+                        if element_symbol in self.oxide_factors and self.use_oxide_var.isChecked():
                             _, factor = self.oxide_factors[element_symbol]
                             crm_values[col] = crm_dict[element_symbol] * factor
                         else:
