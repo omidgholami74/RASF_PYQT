@@ -1,7 +1,7 @@
 import sys
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTableView,
-    QHeaderView, QScrollBar, QComboBox, QLineEdit, QDialog, QFileDialog, QMessageBox,QFrame
+    QHeaderView, QScrollBar, QComboBox, QLineEdit, QDialog, QFileDialog, QMessageBox, QFrame
 )
 from PyQt6.QtCore import Qt, QAbstractTableModel, QVariant
 from PyQt6.QtGui import QStandardItemModel, QStandardItem, QFont
@@ -14,8 +14,15 @@ import numpy as np
 import os
 import platform
 
-# Button style for consistent UI
-button_style = """
+# Global stylesheet for consistent UI and white backgrounds
+global_style = """
+    QWidget {
+        background-color: white;
+        font: 12px 'Segoe UI';
+    }
+    QDialog {
+        background-color: white;
+    }
     QPushButton {
         background-color: #f5f5f5;
         color: black;
@@ -27,6 +34,36 @@ button_style = """
     }
     QPushButton:hover {
         background-color: #ddd;
+    }
+    QComboBox {
+        background-color: white;
+        color: black;
+        border: 1px solid #ccc;
+        padding: 5px;
+        font: 12px 'Segoe UI';
+    }
+    QComboBox QAbstractItemView {
+        background-color: white;
+        color: black;
+        selection-background-color: #ddd;
+        selection-color: black;
+    }
+    QLineEdit {
+        background-color: white;
+        color: black;
+        border: 1px solid #ccc;
+        padding: 5px;
+        font: 12px 'Segoe UI';
+    }
+    QTableView {
+        background-color: white;
+        border: 1px solid #ccc;
+        font: 12px 'Segoe UI';
+    }
+    QHeaderView::section {
+        background-color: #d3d3d3;
+        font: bold 12px 'Segoe UI';
+        border: 1px solid #ccc;
     }
 """
 
@@ -70,6 +107,7 @@ class FilterDialog(QDialog):
         self.solution_label_order = solution_label_order
         self.element_order = element_order
         self.update_callback = update_callback
+        self.setStyleSheet(global_style)  # Apply global stylesheet
         self.setup_ui()
 
     def setup_ui(self):
@@ -81,25 +119,14 @@ class FilterDialog(QDialog):
         self.filter_combo = QComboBox()
         self.filter_combo.addItems(["Solution Label", "Element"])
         self.filter_combo.setFont(QFont("Segoe UI", 12))
-        self.filter_combo.setCurrentText(self.filter_field.get())
+        self.filter_combo.setCurrentText(self.filter_field)  # Fixed: Removed .get()
         self.filter_combo.currentTextChanged.connect(self.update_checkboxes)
         layout.addWidget(self.filter_combo)
 
         # Table for filter values
         self.filter_table = QTableView()
         self.filter_table.setSelectionMode(QTableView.SelectionMode.NoSelection)
-        self.filter_table.setStyleSheet("""
-            QTableView {
-                background-color: white;
-                border: 1px solid #ccc;
-                font: 12px 'Segoe UI';
-            }
-            QHeaderView::section {
-                background-color: #d3d3d3;
-                font: bold 12px 'Segoe UI';
-                border: 1px solid #ccc;
-            }
-        """)
+        self.filter_table.setStyleSheet(global_style)
         self.filter_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.filter_table)
 
@@ -108,17 +135,14 @@ class FilterDialog(QDialog):
 
         # Buttons
         select_all_btn = QPushButton("Select All")
-        select_all_btn.setStyleSheet(button_style)
         select_all_btn.clicked.connect(lambda: self.set_all_checkboxes(True))
         layout.addWidget(select_all_btn)
 
         deselect_all_btn = QPushButton("Deselect All")
-        deselect_all_btn.setStyleSheet(button_style)
         deselect_all_btn.clicked.connect(lambda: self.set_all_checkboxes(False))
         layout.addWidget(deselect_all_btn)
 
         apply_btn = QPushButton("Apply")
-        apply_btn.setStyleSheet(button_style)
         apply_btn.clicked.connect(self.accept)
         layout.addWidget(apply_btn)
 
@@ -170,7 +194,7 @@ class ResultsFrame(QWidget):
     def __init__(self, app, parent=None):
         super().__init__(parent)
         self.app = app
-        self.setStyleSheet("background-color: transparent;")
+        self.setStyleSheet(global_style)  # Apply global stylesheet
         self.search_var = ""
         self.filter_field = "Solution Label"
         self.filter_values = {}  # Store selected filter values
@@ -197,19 +221,16 @@ class ResultsFrame(QWidget):
 
         # Search button
         search_button = QPushButton("Search")
-        search_button.setStyleSheet(button_style)
         search_button.clicked.connect(self.open_search_window)
         button_layout.addWidget(search_button)
 
         # Filter button
         filter_button = QPushButton("Filter")
-        filter_button.setStyleSheet(button_style)
         filter_button.clicked.connect(self.open_filter_window)
         button_layout.addWidget(filter_button)
 
         # Save button
         self.save_button = QPushButton("Save Processed Excel")
-        self.save_button.setStyleSheet(button_style)
         self.save_button.clicked.connect(self.save_processed_excel)
         button_layout.addWidget(self.save_button)
 
@@ -235,19 +256,7 @@ class ResultsFrame(QWidget):
 
         # Table view
         self.processed_table = QTableView()
-        self.processed_table.setStyleSheet("""
-            QTableView {
-                background-color: white;
-                gridline-color: #ccc;
-                font: 12px 'Segoe UI';
-            }
-            QHeaderView::section {
-                background-color: #d3d3d3;
-                font: bold 12px 'Segoe UI';
-                border: 1px solid #ccc;
-                padding: 5px;
-            }
-        """)
+        self.processed_table.setStyleSheet(global_style)
         self.processed_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         self.processed_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         self.processed_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
@@ -407,6 +416,7 @@ class ResultsFrame(QWidget):
         self.search_window = QDialog(self)
         self.search_window.setWindowTitle("Search Pivot Table")
         self.search_window.setFixedSize(300, 150)
+        self.search_window.setStyleSheet(global_style)  # Apply global stylesheet
         layout = QVBoxLayout(self.search_window)
 
         layout.addWidget(QLabel("Search:", font=QFont("Segoe UI", 12)))
@@ -416,12 +426,10 @@ class ResultsFrame(QWidget):
         layout.addWidget(search_entry)
 
         search_btn = QPushButton("Search")
-        search_btn.setStyleSheet(button_style)
         search_btn.clicked.connect(self.show_processed_data)
         layout.addWidget(search_btn)
 
         close_btn = QPushButton("Close")
-        close_btn.setStyleSheet(button_style)
         close_btn.clicked.connect(self.search_window.close)
         layout.addWidget(close_btn)
 
