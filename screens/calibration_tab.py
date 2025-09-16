@@ -18,74 +18,110 @@ class ElementsTab(QWidget):
         self.setup_ui()
 
     def setup_ui(self):
-        """Setup the Elements tab UI with ribbon-style aesthetics"""
+        """Setup the Elements tab UI with modern, ribbon-style aesthetics"""
+        # Main layout
         elements_layout = QVBoxLayout()
-        elements_layout.setContentsMargins(10, 10, 10, 10)
-        elements_layout.setSpacing(10)
+        elements_layout.setContentsMargins(15, 15, 15, 15)
+        elements_layout.setSpacing(12)
         self.setLayout(elements_layout)
-        self.setStyleSheet("background-color: white;")
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #f5f6f5;
+                font-family: 'Segoe UI';
+            }
+        """)
 
         # Container for element buttons
         self.elements_container = QWidget(self)
         self.elements_grid_layout = QGridLayout()
         self.elements_grid_layout.setContentsMargins(10, 10, 10, 10)
-        self.elements_grid_layout.setSpacing(10)
+        self.elements_grid_layout.setSpacing(8)
         self.elements_container.setLayout(self.elements_grid_layout)
-        self.elements_container.setStyleSheet("background-color: white;")
+        self.elements_container.setStyleSheet("""
+            QWidget {
+                background-color: #ffffff;
+                border: 1px solid #e0e0e0;
+                border-radius: 6px;
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+            }
+        """)
         elements_layout.addWidget(self.elements_container)
 
         # Filter frame for wavelength selection
         self.filter_frame = QWidget(self)
         filter_layout = QHBoxLayout()
-        filter_layout.setContentsMargins(10, 0, 10, 10)
-        filter_layout.setSpacing(5)
+        filter_layout.setContentsMargins(10, 8, 10, 8)
+        filter_layout.setSpacing(10)
         filter_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.filter_frame.setLayout(filter_layout)
-        self.filter_frame.setStyleSheet("background-color: white;")
+        self.filter_frame.setStyleSheet("""
+            QWidget {
+                background-color: #ffffff;
+                border: 1px solid #e0e0e0;
+                border-radius: 6px;
+                padding: 8px;
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+            }
+        """)
         elements_layout.addWidget(self.filter_frame)
 
-        # Wavelength filter dropdown
+        # Wavelength filter label
         filter_label = QLabel("Filter by Wavelength:", self.filter_frame)
-        filter_label.setFont(QFont("Segoe UI", 14))
-        filter_label.setStyleSheet("color: black;")
+        filter_label.setFont(QFont("Segoe UI", 12, QFont.Weight.Medium))
+        filter_label.setStyleSheet("color: #333333;")
         filter_layout.addWidget(filter_label)
 
+        # Wavelength filter dropdown
         self.wavelength_combo = QComboBox(self.filter_frame)
         self.wavelength_combo.addItem("All Wavelengths")
-        self.wavelength_combo.setFont(QFont("Segoe UI", 14))
+        self.wavelength_combo.setFont(QFont("Segoe UI", 12))
         self.wavelength_combo.setStyleSheet("""
             QComboBox {
-                background-color: #e0e0e0;
-                color: black;
-                border: 1px solid #aaaaaa;
+                background-color: #ffffff;
+                color: #333333;
+                border: 1px solid #cccccc;
                 border-radius: 4px;
-                padding: 5px;
+                padding: 6px;
+                min-width: 150px;
+                transition: all 0.2s ease;
             }
             QComboBox:hover {
-                background-color: #d0d0d0;
+                background-color: #f0f0f0;
+                border-color: #aaaaaa;
             }
             QComboBox::drop-down {
                 border: none;
-                width: 20px;
+                width: 24px;
             }
             QComboBox QAbstractItemView {
-                background-color: #e0e0e0;
-                color: black;
-                selection-background-color: #b0b0b0;
-                border: 1px solid #aaaaaa;
+                background-color: #ffffff;
+                color: #333333;
+                selection-background-color: #e6f3fa;
+                selection-color: #333333;
+                border: 1px solid #cccccc;
+                border-radius: 4px;
             }
         """)
-        self.wavelength_combo.setFixedHeight(30)
+        self.wavelength_combo.setFixedHeight(34)
+        self.wavelength_combo.setToolTip("Select a wavelength to filter element data")
         self.wavelength_combo.currentTextChanged.connect(self.filter_by_wavelength)
         filter_layout.addWidget(self.wavelength_combo)
+        filter_layout.addStretch()
 
         # Details frame with TreeWidget for element data
         self.details_frame = QWidget(self)
         details_layout = QVBoxLayout()
         details_layout.setContentsMargins(10, 10, 10, 10)
-        details_layout.setSpacing(0)
+        details_layout.setSpacing(8)
         self.details_frame.setLayout(details_layout)
-        self.details_frame.setStyleSheet("background-color: white;")
+        self.details_frame.setStyleSheet("""
+            QWidget {
+                background-color: #ffffff;
+                border: 1px solid #e0e0e0;
+                border-radius: 6px;
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+            }
+        """)
         elements_layout.addWidget(self.details_frame, 1)
 
         # TreeWidget for element details
@@ -93,50 +129,49 @@ class ElementsTab(QWidget):
         self.details_tree.setHeaderLabels(["Solution Label", "Element", "Soln Conc", "Wavelength"])
         self.details_tree.setStyleSheet("""
             QTreeWidget {
-                background-color: white;
-                color: black;
+                background-color: #ffffff;
+                color: #333333;
                 font: 12px 'Segoe UI';
-                border: 1px solid #cccccc;
+                border: none;
                 border-radius: 4px;
-                gridline-color: #dddddd;
+                gridline-color: #e0e0e0;
             }
             QTreeWidget::item {
-                height: 28px;
-                padding: 2px;
-                border-bottom: 1px solid #dddddd;
-                border-right: 1px solid #dddddd;
+                height: 30px;
+                padding: 4px;
+                border-bottom: 1px solid #e8e8e8;
             }
             QTreeWidget::item:selected {
-                background-color: #b0c4de;
-                color: black;
+                background-color: #e6f3fa;
+                color: #333333;
             }
             QTreeWidget::item:hover {
-                background-color: #f0f0f0;
+                background-color: #f5f6f5;
             }
             QHeaderView::section {
-                background-color: #e0e0e0;
-                color: black;
+                background-color: #f0f0f0;
+                color: #333333;
                 font: bold 12px 'Segoe UI';
-                padding: 6px;
+                padding: 8px;
                 border: none;
-                border-bottom: 1px solid #cccccc;
-                border-right: 1px solid #cccccc;
+                border-bottom: 1px solid #e0e0e0;
+                border-right: 1px solid #e0e0e0;
             }
             QHeaderView::section:hover {
-                background-color: #d0d0d0;
+                background-color: #e8e8e8;
             }
         """)
         self.details_tree.setRootIsDecorated(False)
         self.details_tree.setSortingEnabled(True)
-        self.details_tree.setAlternatingRowColors(True)  # Enable zebra striping
+        self.details_tree.setAlternatingRowColors(True)
         self.details_tree.header().setSectionsClickable(True)
 
         # Configure columns
         columns = [
-            ("Solution Label", 200),
-            ("Element", 120),
-            ("Soln Conc", 120),
-            ("Wavelength", 120)
+            ("Solution Label", 220),
+            ("Element", 140),
+            ("Soln Conc", 140),
+            ("Wavelength", 140)
         ]
         for col, width in columns:
             col_index = columns.index((col, width))
@@ -161,23 +196,28 @@ class ElementsTab(QWidget):
             row = i // num_columns
             col = i % num_columns
             btn = QPushButton(element, self.elements_container)
-            btn.setFixedSize(80, 30)
-            btn.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+            btn.setFixedSize(85, 34)
+            btn.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
             btn.setStyleSheet("""
                 QPushButton {
-                    background-color: #e0e0e0;
-                    color: black;
-                    border: 1px solid #aaaaaa;
+                    background-color: #ffffff;
+                    color: #333333;
+                    border: 1px solid #cccccc;
                     border-radius: 4px;
-                    padding: 5px;
+                    padding: 6px;
+                    transition: all 0.2s ease;
                 }
                 QPushButton:hover {
-                    background-color: #d0d0d0;
+                    background-color: #e6f3fa;
+                    border-color: #4a90e2;
+                    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
                 }
                 QPushButton:pressed {
-                    background-color: #b0b0b0;
+                    background-color: #d1e7f5;
+                    border-color: #2e6da4;
                 }
             """)
+            btn.setToolTip(f"View details for {element}")
             btn.clicked.connect(lambda checked, el=element: self.show_element_details(el))
             self.elements_grid_layout.addWidget(btn, row, col)
 
@@ -187,9 +227,7 @@ class ElementsTab(QWidget):
             logger.error("Invalid DataFrame provided")
             return None
         try:
-            # Select only required columns
             df = df[['Type', 'Element', 'Solution Label', 'Soln Conc']].copy()
-            # Remove NaN values and convert to string
             df = df.dropna(subset=['Type', 'Element'])
             df['Type'] = df['Type'].astype(str).str.strip()
             df['Element'] = df['Element'].astype(str).str.strip()
@@ -209,33 +247,30 @@ class ElementsTab(QWidget):
             logger.error("No valid DataFrame available")
             self.details_tree.clear()
             item = QTreeWidgetItem(["No data available", element, "", ""])
-            item.setForeground(0, QBrush(QColor("red")))
+            item.setForeground(0, QBrush(QColor("#d32f2f")))
             self.details_tree.addTopLevelItem(item)
             return
 
-        # Clear previous details
         self.details_tree.clear()
 
-        # Get STD data for the element
         try:
             std_data = df[(df['Type'] == 'Std') & (df['Element'].str.startswith(element + ' '))]
         except Exception as e:
             logger.error(f"Error filtering STD data: {str(e)}")
             item = QTreeWidgetItem([f"Error: {str(e)}", element, "", ""])
-            item.setForeground(0, QBrush(QColor("red")))
+            item.setForeground(0, QBrush(QColor("#d32f2f")))
             self.details_tree.addTopLevelItem(item)
             return
 
         if std_data.empty:
             item = QTreeWidgetItem(["No STD data found", element, "", ""])
-            item.setForeground(0, QBrush(QColor("gray")))
+            item.setForeground(0, QBrush(QColor("#757575")))
             self.details_tree.addTopLevelItem(item)
-            self.wavelength_combo.blockSignals(True)  # Prevent recursion
+            self.wavelength_combo.blockSignals(True)
             self.wavelength_combo.clear()
             self.wavelength_combo.addItem("All Wavelengths")
             self.wavelength_combo.blockSignals(False)
         else:
-            # Extract unique wavelengths
             try:
                 wavelengths = std_data['Element'].str.replace(element + ' ', '', regex=False).unique()
                 wavelengths = [w for w in wavelengths if w]
@@ -243,14 +278,12 @@ class ElementsTab(QWidget):
                 logger.error(f"Error extracting wavelengths: {str(e)}")
                 wavelengths = []
 
-            # Update dropdown menu
-            self.wavelength_combo.blockSignals(True)  # Prevent recursion
+            self.wavelength_combo.blockSignals(True)
             self.wavelength_combo.clear()
             self.wavelength_combo.addItems(["All Wavelengths"] + sorted(wavelengths))
             self.wavelength_combo.setCurrentText("All Wavelengths")
             self.wavelength_combo.blockSignals(False)
 
-            # Show all data
             try:
                 items = [
                     QTreeWidgetItem([
@@ -261,16 +294,16 @@ class ElementsTab(QWidget):
                     ]) for _, row in std_data.iterrows()
                 ]
                 for i, item in enumerate(items):
-                    if i % 2 == 0:  # Enhance alternating colors
-                        item.setBackground(0, QBrush(QColor("#f8f8f8")))
-                        item.setBackground(1, QBrush(QColor("#f8f8f8")))
-                        item.setBackground(2, QBrush(QColor("#f8f8f8")))
-                        item.setBackground(3, QBrush(QColor("#f8f8f8")))
+                    if i % 2 == 0:
+                        item.setBackground(0, QBrush(QColor("#fafafa")))
+                        item.setBackground(1, QBrush(QColor("#fafafa")))
+                        item.setBackground(2, QBrush(QColor("#fafafa")))
+                        item.setBackground(3, QBrush(QColor("#fafafa")))
                 self.details_tree.addTopLevelItems(items)
             except Exception as e:
                 logger.error(f"Error populating tree: {str(e)}")
                 item = QTreeWidgetItem([f"Error: {str(e)}", element, "", ""])
-                item.setForeground(0, QBrush(QColor("red")))
+                item.setForeground(0, QBrush(QColor("#d32f2f")))
                 self.details_tree.addTopLevelItem(item)
 
     def filter_by_wavelength(self, selected_wavelength):
@@ -287,30 +320,27 @@ class ElementsTab(QWidget):
             logger.error("No valid DataFrame available")
             self.details_tree.clear()
             item = QTreeWidgetItem(["No data available", self.current_element, "", selected_wavelength])
-            item.setForeground(0, QBrush(QColor("red")))
+            item.setForeground(0, QBrush(QColor("#d32f2f")))
             self.details_tree.addTopLevelItem(item)
             return
 
-        # Clear previous details
         self.details_tree.clear()
 
-        # Get STD data for the element and specific wavelength
         element_with_wavelength = f"{self.current_element} {selected_wavelength}".strip()
         try:
-            # Step-by-step filtering to avoid recursion error
             type_mask = df['Type'] == 'Std'
             element_mask = df['Element'] == element_with_wavelength
             std_data = df[type_mask & element_mask]
         except Exception as e:
             logger.error(f"Error filtering data: {str(e)}")
             item = QTreeWidgetItem([f"Error: {str(e)}", self.current_element, "", selected_wavelength])
-            item.setForeground(0, QBrush(QColor("red")))
+            item.setForeground(0, QBrush(QColor("#d32f2f")))
             self.details_tree.addTopLevelItem(item)
             return
 
         if std_data.empty:
             item = QTreeWidgetItem([f"No data for {selected_wavelength}", self.current_element, "", selected_wavelength])
-            item.setForeground(0, QBrush(QColor("gray")))
+            item.setForeground(0, QBrush(QColor("#757575")))
             self.details_tree.addTopLevelItem(item)
         else:
             try:
@@ -324,15 +354,15 @@ class ElementsTab(QWidget):
                 ]
                 for i, item in enumerate(items):
                     if i % 2 == 0:
-                        item.setBackground(0, QBrush(QColor("#f8f8f8")))
-                        item.setBackground(1, QBrush(QColor("#f8f8f8")))
-                        item.setBackground(2, QBrush(QColor("#f8f8f8")))
-                        item.setBackground(3, QBrush(QColor("#f8f8f8")))
+                        item.setBackground(0, QBrush(QColor("#fafafa")))
+                        item.setBackground(1, QBrush(QColor("#fafafa")))
+                        item.setBackground(2, QBrush(QColor("#fafafa")))
+                        item.setBackground(3, QBrush(QColor("#fafafa")))
                 self.details_tree.addTopLevelItems(items)
             except Exception as e:
                 logger.error(f"Error populating tree: {str(e)}")
                 item = QTreeWidgetItem([f"Error: {str(e)}", self.current_element, "", selected_wavelength])
-                item.setForeground(0, QBrush(QColor("red")))
+                item.setForeground(0, QBrush(QColor("#d32f2f")))
                 self.details_tree.addTopLevelItem(item)
 
     def process_blk_elements(self):
@@ -346,7 +376,6 @@ class ElementsTab(QWidget):
             self.display_elements(["Cu", "Zn", "Fe"])
             return
 
-        # Filter BLK data
         try:
             if 'Type' in df.columns:
                 blk_data = df[df['Type'] == 'Blk']
@@ -357,7 +386,6 @@ class ElementsTab(QWidget):
             self.display_elements(["Cu", "Zn", "Fe"])
             return
 
-        # Extract unique element names
         self.filtered_elements = []
         try:
             for element in blk_data['Element'].unique():
@@ -369,7 +397,6 @@ class ElementsTab(QWidget):
             self.display_elements(["Cu", "Zn", "Fe"])
             return
 
-        # Display elements
         if self.filtered_elements:
             logger.info(f"Displaying filtered elements: {self.filtered_elements}")
             self.display_elements(self.filtered_elements)
