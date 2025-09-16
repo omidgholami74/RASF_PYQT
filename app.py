@@ -62,7 +62,6 @@ class MainWindow(QMainWindow):
                 "Export": self.pivot_tab.export_pivot,
                 "Check CRM": self.pivot_tab.check_rm,
                 "Clear CRM Inline": self.pivot_tab.clear_inline_crm,
-                "Search": self.pivot_tab.open_row_filter_window,
                 "Row Filter": self.pivot_tab.open_row_filter_window,
                 "Column Filter": self.pivot_tab.open_column_filter_window
             },
