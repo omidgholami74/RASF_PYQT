@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QLineEdit, QPushButton, QTableView, QHeaderView, QMessageBox
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QLineEdit, QPushButton, QTableView, QHeaderView, QMessageBox, QGroupBox
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QStandardItemModel, QStandardItem, QFont
 import pandas as pd
@@ -23,97 +23,130 @@ class VolumeCheckFrame(QWidget):
         self.setup_ui()
 
     def setup_ui(self):
-        """Set up the UI with controls and a scrollable table."""
+        """Set up the UI with enhanced controls and a modern layout."""
         start_time = time.time()
         self.setStyleSheet("""
             QWidget {
-                background-color: #FAFAFA;
-                font: 12px 'Segoe UI';
+                background-color: #F5F7FA;
+                font-family: 'Inter', 'Segoe UI', sans-serif;
+                font-size: 13px;
+            }
+            QGroupBox {
+                font-weight: bold;
+                color: #1A3C34;
+                margin-top: 15px;
+                border: 1px solid #D0D7DE;
+                border-radius: 6px;
+                padding: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 5px;
+                left: 10px;
             }
             QLineEdit {
                 background-color: #FFFFFF;
-                border: 1px solid #B0BEC5;
-                padding: 5px;
-                border-radius: 4px;
+                border: 1px solid #D0D7DE;
+                padding: 6px;
+                border-radius: 6px;
+                font-size: 13px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #2E7D32;
+                box-shadow: 0 0 5px rgba(46, 125, 50, 0.3);
             }
             QPushButton {
                 background-color: #2E7D32;
                 color: white;
                 border: none;
                 padding: 8px 16px;
-                font: bold 11px 'Segoe UI';
-                border-radius: 5px;
+                font-weight: 600;
+                font-size: 13px;
+                border-radius: 6px;
             }
             QPushButton:hover {
                 background-color: #1B5E20;
             }
             QPushButton:disabled {
-                background-color: #CCCCCC;
+                background-color: #E0E0E0;
+                color: #6B7280;
             }
             QLabel {
-                font: 13px 'Segoe UI';
-                color: #212121;
+                color: #1A3C34;
+                font-size: 13px;
             }
             QTableView {
-                background-color: white;
-                gridline-color: #ccc;
-                font: 11px 'Segoe UI';
+                background-color: #FFFFFF;
+                border: 1px solid #D0D7DE;
+                gridline-color: #E5E7EB;
+                font-size: 12px;
+                selection-background-color: #DBEAFE;
+                selection-color: #1A3C34;
             }
             QHeaderView::section {
-                background-color: #ECEFF1;
-                font: bold 12px 'Segoe UI';
-                border: 1px solid #ccc;
-                padding: 5px;
+                background-color: #F9FAFB;
+                font-weight: 600;
+                color: #1A3C34;
+                border: 1px solid #D0D7DE;
+                padding: 6px;
             }
             QTableView::item:selected {
-                background-color: #BBDEFB;
-                color: black;
+                background-color: #DBEAFE;
+                color: #1A3C34;
             }
         """)
 
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setContentsMargins(15, 15, 15, 15)
+        main_layout.setSpacing(15)
 
-        # Input frame
-        input_frame = QFrame()
-        input_layout = QHBoxLayout(input_frame)
+        # Input group
+        input_group = QGroupBox("Volume Check")
+        input_layout = QHBoxLayout(input_group)
         input_layout.setSpacing(10)
 
         input_layout.addWidget(QLabel("Expected Volume:"))
         self.volume_entry = QLineEdit()
         self.volume_entry.setText(str(self.volume_value))
-        self.volume_entry.setFixedWidth(100)
+        self.volume_entry.setFixedWidth(120)
+        self.volume_entry.setToolTip("Enter the expected volume (e.g., 50.0)")
         input_layout.addWidget(self.volume_entry)
 
         check_button = QPushButton("Check Volumes")
+        check_button.setToolTip("Check volumes against the expected value")
         check_button.clicked.connect(self.check_volumes)
         input_layout.addWidget(check_button)
+        input_layout.addStretch()
 
-        main_layout.addWidget(input_frame)
+        main_layout.addWidget(input_group)
 
         # Main container
         main_container = QFrame()
         main_layout.addWidget(main_container, stretch=1)
         container_layout = QHBoxLayout(main_container)
-        container_layout.setSpacing(10)
+        container_layout.setSpacing(15)
 
-        # Correction frame
-        correction_frame = QFrame()
-        correction_layout = QVBoxLayout(correction_frame)
+        # Correction group
+        correction_group = QGroupBox("Volume Correction")
+        correction_layout = QVBoxLayout(correction_group)
         correction_layout.setSpacing(10)
 
         # New volume input
         new_volume_frame = QFrame()
         new_volume_layout = QHBoxLayout(new_volume_frame)
-        new_volume_layout.setSpacing(5)
+        new_volume_layout.setSpacing(10)
         new_volume_layout.addWidget(QLabel("New Volume:"))
         self.new_volume_entry = QLineEdit()
         self.new_volume_entry.setText(str(self.new_volume))
-        self.new_volume_entry.setFixedWidth(100)
+        self.new_volume_entry.setFixedWidth(120)
+        self.new_volume_entry.setToolTip("Enter the new volume to apply to the selected sample")
         new_volume_layout.addWidget(self.new_volume_entry)
         correction_button = QPushButton("Apply Correction")
+        correction_button.setToolTip("Apply the new volume to the selected sample")
         correction_button.clicked.connect(self.apply_volume_correction)
         new_volume_layout.addWidget(correction_button)
+        new_volume_layout.addStretch()
         correction_layout.addWidget(new_volume_frame)
 
         # Bad volumes table
@@ -123,9 +156,10 @@ class VolumeCheckFrame(QWidget):
         self.correction_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.correction_table.verticalHeader().setVisible(False)
         self.correction_table.clicked.connect(self.select_row)
+        self.correction_table.setToolTip("Select a row to correct its volume or mark it for exclusion")
         correction_layout.addWidget(self.correction_table)
 
-        container_layout.addWidget(correction_frame, stretch=1)
+        container_layout.addWidget(correction_group, stretch=1)
 
         logger.debug(f"UI setup took {time.time() - start_time:.3f} seconds")
 
