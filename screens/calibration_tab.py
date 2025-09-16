@@ -227,7 +227,8 @@ class ElementsTab(QWidget):
             logger.error("Invalid DataFrame provided")
             return None
         try:
-            df = df[['Type', 'Element', 'Solution Label', 'Soln Conc']].copy()
+            print(df)
+            df = df[['Type', 'Element', 'Solution Label', 'Corr Con']].copy()
             df = df.dropna(subset=['Type', 'Element'])
             df['Type'] = df['Type'].astype(str).str.strip()
             df['Element'] = df['Element'].astype(str).str.strip()
@@ -370,7 +371,7 @@ class ElementsTab(QWidget):
         logger.info("Processing BLK elements")
         self.df_cache = self.clean_dataframe(self.app.get_data())
         df = self.df_cache
-
+        print(df)
         if df is None:
             logger.info("No valid data available in process_blk_elements")
             self.display_elements(["Cu", "Zn", "Fe"])
