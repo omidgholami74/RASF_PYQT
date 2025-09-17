@@ -3,19 +3,20 @@ import os
 import platform
 import pandas as pd
 import sqlite3
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, QTableView, 
-                             QFrame, QScrollArea, QGridLayout, QDialog, QMessageBox, QHeaderView,
-                             QLineEdit, QCheckBox, QScrollBar)
-from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QSortFilterProxyModel
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, QTableView,
+    QFrame, QScrollArea, QGridLayout, QDialog, QMessageBox, QHeaderView,
+    QLineEdit, QCheckBox, QScrollBar, QAbstractItemView
+)
+from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex
 from PyQt6.QtGui import QFont, QStandardItemModel, QStandardItem, QColor, QPalette
-from openpyxl import load_workbook
-import logging
 
 # Setup logging
+import logging
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# Global stylesheet (defined above)
+# Global stylesheet
 global_style = """
     QWidget {
         background-color: white;
@@ -165,6 +166,90 @@ class CRMTableModel(QAbstractTableModel):
             return str(section + 1)
         return None
 
+class FreezeTableWidget(QTableView):
+    """Custom QTableView with a frozen first column"""
+    def __init__(self, model, parent=None):
+        super().__init__(parent)
+        self.frozenTableView = QTableView(self)
+        self.setModel(model)
+        self.frozenTableView.setModel(model)
+        self.init()
+
+        # Connect signals for synchronized scrolling and resizing
+        self.horizontalHeader().sectionResized.connect(self.updateSectionWidth)
+        self.verticalHeader().sectionResized.connect(self.updateSectionHeight)
+        self.frozenTableView.verticalScrollBar().valueChanged.connect(self.frozenVerticalScroll)
+        self.verticalScrollBar().valueChanged.connect(self.mainVerticalScroll)
+
+    def init(self):
+        self.frozenTableView.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.frozenTableView.verticalHeader().hide()
+        self.frozenTableView.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        self.viewport().stackUnder(self.frozenTableView)
+        self.frozenTableView.setStyleSheet(global_style)
+        self.frozenTableView.setSelectionModel(self.selectionModel())
+        
+        # Hide all columns except the first one in the frozen table
+        for col in range(self.model().columnCount()):
+            self.frozenTableView.setColumnHidden(col, col != 0)
+        self.frozenTableView.setColumnWidth(0, self.columnWidth(0))
+        self.frozenTableView.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.frozenTableView.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerItem)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerItem)
+        self.frozenTableView.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerItem)
+        self.updateFrozenTableGeometry()
+        self.frozenTableView.show()
+        self.frozenTableView.viewport().repaint()
+
+    def updateSectionWidth(self, logicalIndex, oldSize, newSize):
+        if logicalIndex == 0:
+            self.frozenTableView.setColumnWidth(0, newSize)
+            self.updateFrozenTableGeometry()
+            self.frozenTableView.viewport().repaint()
+
+    def updateSectionHeight(self, logicalIndex, oldSize, newSize):
+        self.frozenTableView.setRowHeight(logicalIndex, newSize)
+        self.frozenTableView.viewport().repaint()
+
+    def frozenVerticalScroll(self, value):
+        self.verticalScrollBar().setValue(value)
+        self.frozenTableView.viewport().repaint()
+        self.viewport().update()
+
+    def mainVerticalScroll(self, value):
+        self.frozenTableView.verticalScrollBar().setValue(value)
+        self.frozenTableView.viewport().repaint()
+        self.viewport().update()
+
+    def updateFrozenTableGeometry(self):
+        self.frozenTableView.setGeometry(
+            self.verticalHeader().width() + self.frameWidth(),
+            self.frameWidth(),
+            self.columnWidth(0),
+            self.viewport().height() + self.horizontalHeader().height()
+        )
+        self.frozenTableView.viewport().repaint()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.updateFrozenTableGeometry()
+        self.frozenTableView.viewport().repaint()
+
+    def moveCursor(self, cursorAction, modifiers):
+        current = super().moveCursor(cursorAction, modifiers)
+        if cursorAction == QAbstractItemView.CursorAction.MoveLeft and current.column() > 0:
+            visual_x = self.visualRect(current).topLeft().x()
+            if visual_x < self.frozenTableView.columnWidth(0):
+                new_value = self.horizontalScrollBar().value() + visual_x - self.frozenTableView.columnWidth(0)
+                self.horizontalScrollBar().setValue(int(new_value))
+        return current
+
+    def scrollTo(self, index, hint=QAbstractItemView.ScrollHint.EnsureVisible):
+        if index.column() > 0:
+            super().scrollTo(index, hint)
+        self.frozenTableView.viewport().repaint()
+
 class CRMTab(QWidget):
     """CRMTab for managing CRM data with SQLite and pivot table display."""
     def __init__(self, app, parent_frame):
@@ -189,14 +274,14 @@ class CRMTab(QWidget):
     def setup_ui(self):
         """Setup UI with controls and placeholder."""
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(1, 1, 1,1)  # Increased margins for breathing room
-        main_layout.setSpacing(1)  # Slightly larger spacing for clarity
+        main_layout.setContentsMargins(10, 10, 10, 10)  # Increased margins for breathing room
+        main_layout.setSpacing(10)  # Slightly larger spacing for clarity
 
         # Control frame
         control_frame = QFrame()
         control_layout = QHBoxLayout(control_frame)
-        control_layout.setContentsMargins(6, 6, 6, 6)  # Optimized margins
-        control_layout.setSpacing(12)  # Consistent spacing
+        control_layout.setContentsMargins(6, 6, 6, 6)
+        control_layout.setSpacing(12)
 
         # Analysis Method Filter
         control_layout.addWidget(QLabel("Analysis Method:", font=QFont("Segoe UI", 11)))
@@ -252,21 +337,23 @@ class CRMTab(QWidget):
         self.setPalette(palette)
 
     def setup_full_ui(self):
-        """Setup full UI with QTableView and scrollbars."""
+        """Setup full UI with QTableView and frozen first column."""
         if self.ui_initialized:
             return
 
         # Remove placeholder
         if self.placeholder_label:
             self.placeholder_label.deleteLater()
+            self.placeholder_label = None
 
         # Table container
         table_container = QFrame()
         table_layout = QVBoxLayout(table_container)
-        table_layout.setContentsMargins(0, 0, 0, 0)  # No margins for table
+        table_layout.setContentsMargins(0, 0, 0, 0)
         table_layout.setSpacing(0)
 
-        self.table_view = QTableView()
+        # Initialize table view with frozen first column
+        self.table_view = FreezeTableWidget(CRMTableModel(self))
         self.table_view.setAlternatingRowColors(True)
         self.table_view.setSelectionMode(QTableView.SelectionMode.SingleSelection)
         self.table_view.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
@@ -280,13 +367,8 @@ class CRMTab(QWidget):
         self.table_view.setEnabled(True)
         self.table_view.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.table_view.setStyleSheet(global_style)
-        self.table_view.setShowGrid(True)  # Ensure grid lines are visible
+        self.table_view.setShowGrid(True)
         table_layout.addWidget(self.table_view)
-
-        # Horizontal scrollbar
-        hsb = QScrollBar(Qt.Orientation.Horizontal)
-        self.table_view.setHorizontalScrollBar(hsb)
-        table_layout.addWidget(hsb)
 
         main_layout = self.layout()
         main_layout.addWidget(table_container)
@@ -403,6 +485,7 @@ class CRMTab(QWidget):
             pivot_df.to_csv('pivot_crm.csv')
             model = CRMTableModel(self, pivot_df, decimal_places=int(self.decimal_places.currentText()))
             self.table_view.setModel(model)
+            self.table_view.frozenTableView.setModel(model)
             
             # Set column widths
             for col_idx, col in enumerate(pivot_df.columns):
@@ -410,6 +493,11 @@ class CRMTab(QWidget):
                 pixel_width = min(max_width * 8, 160)
                 self.column_widths[col] = pixel_width
                 self.table_view.setColumnWidth(col_idx, pixel_width)
+                if col_idx == 0:
+                    self.table_view.frozenTableView.setColumnWidth(0, pixel_width)
+
+            self.table_view.model().layoutChanged.emit()
+            self.table_view.frozenTableView.model().layoutChanged.emit()
 
         except Exception as e:
             logger.error(f"Failed to update display: {str(e)}")
