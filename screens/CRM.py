@@ -400,6 +400,7 @@ class CRMTab(QWidget):
             ).reset_index()
 
             self.pivot_data = pivot_df
+            pivot_df.to_csv('pivot_crm.csv')
             model = CRMTableModel(self, pivot_df, decimal_places=int(self.decimal_places.currentText()))
             self.table_view.setModel(model)
             

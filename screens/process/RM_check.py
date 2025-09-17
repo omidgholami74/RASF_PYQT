@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import (QWidget, QFrame, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QLabel, QTableView, QHeaderView, QMessageBox)
+from PyQt6.QtWidgets import (QWidget, QFrame, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QLabel, QTableView, QHeaderView, QMessageBox, QMainWindow)
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QStandardItemModel, QStandardItem
 from PyQt6.QtCharts import QChart, QChartView, QLineSeries, QScatterSeries, QValueAxis, QCategoryAxis
@@ -9,10 +9,76 @@ import json
 import os
 import time
 import logging
+import uuid
 
 # Setup logging
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+class PlotWindow(QMainWindow):
+    """A window to display a scatter plot for a selected column."""
+    def __init__(self, title, df, x_column, y_column):
+        super().__init__()
+        self.setWindowTitle(title)
+        self.setGeometry(150, 150, 800, 600)
+        self.df = df
+        self.x_column = x_column
+        self.y_column = y_column
+        self.setup_plot()
+        logger.debug(f"PlotWindow created for {y_column}")
+
+    def setup_plot(self):
+        """Setup the scatter plot in the window."""
+        logger.debug(f"Setting up scatter plot for {self.y_column} vs {self.x_column}")
+        chart = QChart()
+        chart.setTitle(f"Scatter Plot of {self.y_column} vs {self.x_column}")
+
+        series = QScatterSeries()
+        series.setName(self.y_column)
+        series.setMarkerSize(8)
+
+        valid_data = 0
+        for _, row in self.df.iterrows():
+            x_value = row[self.x_column]
+            y_value = row[self.y_column]
+            if pd.notna(x_value) and pd.notna(y_value):
+                try:
+                    series.append(float(x_value), float(y_value))
+                    valid_data += 1
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Error appending data point ({x_value}, {y_value}): {e}")
+
+        if valid_data == 0:
+            logger.warning(f"No valid data to plot for {self.y_column}")
+            chart.setTitle(f"No valid data for {self.y_column}")
+            self.setCentralWidget(QLabel("No valid data to plot"))
+            return
+
+        chart.addSeries(series)
+
+        axis_x = QValueAxis()
+        axis_x.setTitleText(self.x_column)
+        axis_x.setLabelFormat("%.0f")
+        x_values = self.df[self.x_column].dropna().astype(float)
+        if not x_values.empty:
+            axis_x.setRange(x_values.min(), x_values.max())
+
+        axis_y = QValueAxis()
+        axis_y.setTitleText(self.y_column)
+        axis_y.setLabelFormat("%.3f")
+        y_values = self.df[self.y_column].dropna().astype(float)
+        if not y_values.empty:
+            axis_y.setRange(y_values.min(), y_values.max())
+
+        chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
+        chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
+        series.attachAxis(axis_x)
+        series.attachAxis(axis_y)
+
+        chart_view = QChartView(chart)
+        chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.setCentralWidget(chart_view)
+        logger.debug(f"Scatter plot setup completed for {self.y_column}")
 
 class CheckRMFrame(QWidget):
     def __init__(self, app, parent=None):
@@ -33,8 +99,11 @@ class CheckRMFrame(QWidget):
         self.ignored_outliers = {}
         self.user_corrections = {}
         self.corrections_file = "user_corrections.json"
+        self.plot_windows = {}
+        self.current_between_df = None
         self.load_user_corrections()
         self.setup_ui()
+        logger.debug("CheckRMFrame initialized")
 
     def configure_style(self):
         """Apply consistent styling to the frame."""
@@ -88,6 +157,7 @@ class CheckRMFrame(QWidget):
                 color: black;
             }
         """)
+        logger.debug("Styles configured")
 
     def load_user_corrections(self):
         """Load user corrections from JSON file."""
@@ -127,7 +197,7 @@ class CheckRMFrame(QWidget):
         self.keyword_entry.setFixedWidth(100)
         control_layout.addWidget(self.keyword_entry)
 
-        threshold_label = QLabel("Threshold (σ):")
+        threshold_label = QLabel("Threshold (%):")
         threshold_label.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
         control_layout.addWidget(threshold_label)
         self.threshold_entry = QLineEdit()
@@ -236,6 +306,20 @@ class CheckRMFrame(QWidget):
         corrected_label.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
         right_layout.addWidget(corrected_label)
 
+        # Buttons for plotting columns
+        button_frame = QFrame()
+        button_layout = QHBoxLayout(button_frame)
+        button_layout.addWidget(QLabel("Plot Columns:"))
+        numeric_cols = ["Previous Corr Con", "Corr Con", "Soln Conc", "Intense", "Previous Intense", "Soln Conc (No RM)", "Intense (No RM)"]
+        self.column_buttons = {}
+        for col in numeric_cols:
+            btn = QPushButton(f"Plot {col}")
+            btn.clicked.connect(lambda checked, c=col: self.open_plot_window(c))
+            button_layout.addWidget(btn)
+            self.column_buttons[col] = btn
+            logger.debug(f"Connected button for {col}")
+        right_layout.addWidget(button_frame)
+
         self.corrected_table = QTableView()
         self.corrected_table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
         self.corrected_table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
@@ -245,14 +329,62 @@ class CheckRMFrame(QWidget):
 
         content_layout.addWidget(right_frame, stretch=1)
         main_layout.addWidget(content_frame)
+        logger.debug("UI setup completed")
+
+    def open_plot_window(self, column):
+        """Open a new scatter plot window for the selected column, skip if no valid data."""
+        logger.debug(f"open_plot_window called for column: {column}")
+        logger.debug(f"current_between_df is None: {self.current_between_df is None}")
+        if self.current_between_df is not None:
+            logger.debug(f"current_between_df shape: {self.current_between_df.shape}")
+            logger.debug(f"current_between_df columns: {self.current_between_df.columns.tolist()}")
+
+        plot_df = self.current_between_df
+        if plot_df is None or plot_df.empty:
+            logger.warning("current_between_df is None or empty, falling back to corrected_df")
+            if self.corrected_df is not None and not self.corrected_df.empty:
+                plot_df = self.corrected_df[
+                    (self.corrected_df['Solution Label'] == self.current_label) &
+                    (self.corrected_df['Element'] == self.selected_element)
+                ]
+            else:
+                logger.warning("No data available for plotting, skipping")
+                return
+
+        try:
+            # Ensure column exists
+            if column not in plot_df.columns:
+                logger.warning(f"Column {column} not in plot_df, adding with NaN")
+                plot_df = plot_df.copy()
+                plot_df[column] = np.nan
+
+            # Check for valid data
+            valid_data = plot_df[['original_index', column]].dropna()
+            if valid_data.empty:
+                logger.warning(f"No valid data for {column}, skipping plot")
+                return
+
+            logger.debug(f"Creating PlotWindow for column: {column}")
+            window = PlotWindow(f"Scatter Plot for {column}", plot_df, "original_index", column)
+            window.show()
+            window.raise_()
+            window.activateWindow()
+            window_id = str(uuid.uuid4())
+            self.plot_windows[window_id] = window
+            logger.debug(f"Plot window opened for {column} with ID {window_id}")
+        except Exception as e:
+            logger.error(f"Error creating plot window for {column}: {e}")
+            # Skip silently instead of showing QMessageBox
+            return
 
     def check_rm_changes(self):
         """Check for RM changes and detect outliers."""
         start_time = time.time()
         try:
-            threshold_sigma = float(self.threshold_entry.text())
+            threshold_percent = float(self.threshold_entry.text())
+            threshold = threshold_percent / 100
         except ValueError:
-            QMessageBox.critical(self, "Error", "Please enter a valid number for threshold (σ).")
+            QMessageBox.critical(self, "Error", "Please enter a valid number for threshold (%).")
             return
 
         keyword = self.keyword_entry.text().strip()
@@ -265,14 +397,12 @@ class CheckRMFrame(QWidget):
             QMessageBox.critical(self, "Error", "No data loaded.")
             return
 
-        # Verify required columns in input DataFrame
         required_columns = ['Solution Label', 'Element', 'Type', 'Corr Con', 'Act Wgt', 'Act Vol', 'Coeff 1', 'Coeff 2']
         missing_columns = [col for col in required_columns if col not in df.columns]
         if missing_columns:
             QMessageBox.critical(self, "Error", f"Missing required columns: {missing_columns}")
             return
 
-        # Create original_df and ensure original_index
         self.original_df = df.copy(deep=True)
         self.original_df.reset_index(inplace=True)
         self.original_df.rename(columns={'index': 'original_index'}, inplace=True)
@@ -289,7 +419,6 @@ class CheckRMFrame(QWidget):
         )
         df_filtered['row_id'] = df_filtered.groupby(['Solution Label', 'Element']).cumcount()
 
-        # Merge row_id into original_df
         self.original_df = self.original_df.merge(
             df_filtered[['original_index', 'Solution Label', 'Element', 'row_id']],
             on=['original_index', 'Solution Label', 'Element'],
@@ -297,7 +426,6 @@ class CheckRMFrame(QWidget):
         )
         self.original_df['row_id'] = self.original_df['row_id'].fillna(-1).astype(int)
 
-        # Convert columns to numeric
         numeric_columns = ['Corr Con', 'Act Wgt', 'Act Vol', 'Coeff 1', 'Coeff 2']
         for col in numeric_columns:
             df_filtered[col] = pd.to_numeric(df_filtered[col], errors='coerce')
@@ -362,8 +490,7 @@ class CheckRMFrame(QWidget):
                 coefficients = np.polyfit(valid_row_ids, valid_values, 1)
                 trendline = np.polyval(coefficients, valid_row_ids)
                 residuals = valid_values - trendline
-                residual_std = np.std(residuals) if len(residuals) > 0 else 1.0
-                outlier_mask = np.abs(residuals) > threshold_sigma * residual_std
+                outlier_mask = np.abs(residuals / (trendline + 1e-10)) > threshold
                 outlier_mask |= np.isin(valid_row_ids, list(user_outliers))
                 outlier_mask &= ~np.isin(valid_row_ids, list(user_non_outliers))
                 outlier_mask |= np.isin(valid_row_ids, list(ignored_outliers))
@@ -453,6 +580,7 @@ class CheckRMFrame(QWidget):
         self.outliers_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         self.outliers_table.setColumnWidth(3, 120)
         self.outliers_table.clicked.connect(self.toggle_checkbox)
+        logger.debug("Outliers table displayed")
 
     def toggle_checkbox(self, index):
         """Toggle checkbox state in the outliers table."""
@@ -463,17 +591,26 @@ class CheckRMFrame(QWidget):
                 new_state = Qt.CheckState.Checked if item.checkState() == Qt.CheckState.Unchecked else Qt.CheckState.Unchecked
                 item.setCheckState(new_state)
                 item.setText("☑" if new_state == Qt.CheckState.Checked else "☐")
+                logger.debug(f"Checkbox toggled at row {index.row()} to state {new_state}")
 
     def apply_corrections_for_label(self, label, element):
-        """Apply corrections for a specific label and element."""
+        """Apply corrections for a specific label and element to achieve zero slope."""
+        try:
+            threshold_percent = float(self.threshold_entry.text())
+            threshold = threshold_percent / 100
+        except ValueError:
+            threshold = 0.02
+
         label_df = self.rm_df[self.rm_df['Solution Label'] == label].sort_values('row_id')
         if label_df.empty:
+            logger.warning(f"No data for label {label}")
             return
 
         row_ids = label_df['row_id'].values
         values = pd.to_numeric(label_df[element], errors='coerce').values
         valid_mask = ~np.isnan(values)
         if np.sum(valid_mask) < 2:
+            logger.warning(f"Insufficient valid data for {element} in {label}")
             return
 
         valid_values = values[valid_mask]
@@ -487,8 +624,7 @@ class CheckRMFrame(QWidget):
         coefficients = np.polyfit(valid_row_ids, valid_values, 1)
         trendline = np.polyval(coefficients, valid_row_ids)
         residuals = valid_values - trendline
-        residual_std = np.std(residuals) if len(residuals) > 0 else 1.0
-        outlier_mask = np.abs(residuals) > float(self.threshold_entry.text()) * residual_std
+        outlier_mask = np.abs(residuals / (trendline + 1e-10)) > threshold
         outlier_mask |= np.isin(valid_row_ids, list(user_outliers))
         outlier_mask &= ~np.isin(valid_row_ids, list(user_non_outliers))
         outlier_mask |= np.isin(valid_row_ids, list(ignored_outliers))
@@ -500,18 +636,23 @@ class CheckRMFrame(QWidget):
             condition = (self.corrected_df['Solution Label'] == label) & (self.corrected_df['Element'] == element)
             valid_rows = self.corrected_df[condition]['row_id'].isin(non_outlier_row_ids)
             self.corrected_df.loc[condition & valid_rows, 'Corr Con'] = mean_value
+            logger.debug(f"Applied mean correction ({mean_value:.3f}) to {np.sum(condition & valid_rows)} rows for {label}:{element}")
 
             std_data = self.original_df[self.original_df['Type'] == 'Std'].copy(deep=True)
             updated_df = pd.concat([self.corrected_df, std_data], ignore_index=True)
             self.app.set_data(updated_df, for_results=True)
+            self.app.notify_data_changed()
 
     def get_non_outlier_condition(self, label, element, old_id, new_id):
         """Get condition for non-outlier rows between old_id and new_id."""
         max_old = self.positions_df[(self.positions_df['Solution Label'] == label) & (self.positions_df['row_id'] == old_id)]['max'].values
         min_new = self.positions_df[(self.positions_df['Solution Label'] == label) & (self.positions_df['row_id'] == new_id)]['min'].values
         if len(max_old) == 0 or len(min_new) == 0:
+            logger.warning(f"No valid positions found for {label} between row_ids {old_id} and {new_id}")
             return pd.Series(False, index=self.corrected_df.index)
-        return (self.corrected_df['original_index'] > max_old[0]) & (self.corrected_df['original_index'] < min_new[0])
+        condition = (self.corrected_df['original_index'] > max_old[0]) & (self.corrected_df['original_index'] < min_new[0])
+        logger.debug(f"Non-outlier condition for {label}:{element} between {old_id}->{new_id}: {condition.sum()} rows")
+        return condition
 
     def get_first_non_outlier_condition(self, label, element):
         """Get the first non-outlier condition for a label and element."""
@@ -523,6 +664,7 @@ class CheckRMFrame(QWidget):
                 old_id, new_id = map(int, parts[2].split('->'))
                 self.selected_row_id_pair = f"{old_id}->{new_id}"
                 return self.get_non_outlier_condition(label, element, old_id, new_id)
+        logger.debug(f"No non-outlier condition found for {label}:{element}")
         return pd.Series(False, index=self.corrected_df.index)
 
     def display_ratios(self, label=None, element=None):
@@ -547,6 +689,7 @@ class CheckRMFrame(QWidget):
 
         self.ratios_table.setModel(model)
         self.ratios_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        logger.debug(f"Displayed ratios for {label}:{element}")
 
     def display_non_outlier_ratios(self, label=None, element=None):
         """Display non-outlier points and ratios in the non_outlier_table."""
@@ -570,9 +713,22 @@ class CheckRMFrame(QWidget):
 
         self.non_outlier_table.setModel(model)
         self.non_outlier_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        logger.debug(f"Displayed non-outlier ratios for {label}:{element}")
 
     def display_between_df(self, df):
         """Display corrected DataFrame in the corrected_table."""
+        logger.debug("Entering display_between_df")
+        self.current_between_df = df.copy() if df is not None and not df.empty else None
+        if self.current_between_df is not None:
+            logger.debug(f"current_between_df updated with {len(self.current_between_df)} rows")
+            logger.debug(f"current_between_df columns: {self.current_between_df.columns.tolist()}")
+            # Ensure all required columns exist
+            for col in ["Previous Corr Con", "Soln Conc", "Intense", "Previous Intense", "Soln Conc (No RM)", "Intense (No RM)"]:
+                if col not in self.current_between_df.columns:
+                    self.current_between_df[col] = np.nan
+        else:
+            logger.debug("current_between_df set to None or empty")
+
         model = QStandardItemModel()
         columns = ["Solution Label", "Element", "Previous Corr Con", "Corr Con", "Soln Conc", "Intense", 
                    "Previous Intense", "Soln Conc (No RM)", "Intense (No RM)", "row_id"]
@@ -622,7 +778,7 @@ class CheckRMFrame(QWidget):
                 QStandardItem(str(row['Solution Label'])),
                 QStandardItem(str(row['Element'])),
                 QStandardItem(f"{prev_corr_con:.3f}" if pd.notna(prev_corr_con) else "N/A"),
-                QStandardItem(f"{row['Corr Con']:.3f}" if pd.notna(row['Corr Con']) else "N/A"),
+                QStandardItem(f"{corr_con:.3f}" if pd.notna(corr_con) else "N/A"),
                 QStandardItem(f"{soln_conc:.3f}" if pd.notna(soln_conc) else "N/A"),
                 QStandardItem(f"{intense:.3f}" if pd.notna(intense) else "N/A"),
                 QStandardItem(f"{prev_intense:.3f}" if pd.notna(prev_intense) else "N/A"),
@@ -633,6 +789,7 @@ class CheckRMFrame(QWidget):
 
         self.corrected_table.setModel(model)
         self.corrected_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        logger.debug("display_between_df completed")
 
     def on_outlier_select(self, index):
         """Handle selection in the outliers table."""
@@ -649,6 +806,7 @@ class CheckRMFrame(QWidget):
         between_condition = self.get_first_non_outlier_condition(self.current_label, self.selected_element)
         between_df = self.corrected_df[between_condition & (self.corrected_df['Element'] == self.selected_element)]
         self.display_between_df(between_df)
+        logger.debug(f"Outlier selected: {self.current_label}:{self.selected_element}")
 
     def on_ratio_select(self, index):
         """Handle selection in the ratios table."""
@@ -665,6 +823,7 @@ class CheckRMFrame(QWidget):
         between_condition = self.get_first_non_outlier_condition(self.current_label, self.selected_element)
         between_df = self.corrected_df[between_condition & (self.corrected_df['Element'] == self.selected_element)]
         self.display_between_df(between_df)
+        logger.debug(f"Ratio selected: {self.current_label}:{self.selected_element}")
 
     def on_non_outlier_select(self, index):
         """Handle selection in the non-outlier table."""
@@ -684,6 +843,7 @@ class CheckRMFrame(QWidget):
                                                           if self.selected_row_id_pair else (0, 0))
         between_df = self.corrected_df[between_condition & (self.corrected_df['Element'] == self.selected_element)]
         self.display_between_df(between_df)
+        logger.debug(f"Non-outlier selected: {self.current_label}:{self.selected_element}")
 
     def apply_ratio_correction(self):
         """Apply ratio correction to selected non-outlier points."""
@@ -710,12 +870,14 @@ class CheckRMFrame(QWidget):
         updated_df = pd.concat([self.corrected_df, std_data], ignore_index=True)
         self.app.set_data(updated_df, for_results=True)
         self.app.notify_data_changed()
+        self.apply_corrections_for_label(self.current_label, self.selected_element)
         self.display_non_outlier_ratios(self.current_label, self.selected_element)
         between_condition = self.get_non_outlier_condition(self.current_label, self.selected_element, old_id, new_id)
         between_df = self.corrected_df[between_condition & (self.corrected_df['Element'] == self.selected_element)]
         self.display_between_df(between_df)
-        QMessageBox.information(self, "Result", f"Ratio correction ({ratio:.3f}) applied to {len(between_df)} non-outlier elements between row {self.selected_row_id_pair} for {self.selected_element} in {self.current_label}.")
         self.plot_trend(self.selected_element)
+        QMessageBox.information(self, "Result", f"Ratio correction ({ratio:.3f}) applied to {len(between_df)} non-outlier elements between row {self.selected_row_id_pair} for {self.selected_element} in {self.current_label}.")
+        logger.debug(f"Ratio correction applied: {ratio:.3f} to {len(between_df)} rows")
 
     def apply_all_corrections(self):
         """Apply corrections to all selected outliers."""
@@ -749,12 +911,14 @@ class CheckRMFrame(QWidget):
             std_data = self.original_df[self.original_df['Type'] == 'Std'].copy(deep=True)
             updated_df = pd.concat([self.corrected_df, std_data], ignore_index=True)
             self.app.set_data(updated_df, for_results=True)
+            self.apply_corrections_for_label(self.current_label, self.selected_element)
             self.display_non_outlier_ratios(self.current_label, self.selected_element)
             between_condition = self.get_first_non_outlier_condition(self.current_label, self.selected_element)
             between_df = self.corrected_df[between_condition & (self.corrected_df['Element'] == self.selected_element)]
             self.display_between_df(between_df)
-            QMessageBox.information(self, "Result", f"Applied corrections to {corrections_applied} non-outlier elements for selected outliers.")
             self.plot_trend(self.selected_element)
+            QMessageBox.information(self, "Result", f"Applied corrections to {corrections_applied} non-outlier elements for selected outliers.")
+            logger.debug(f"Applied all corrections to {corrections_applied} rows")
         else:
             QMessageBox.information(self, "Info", "No non-outlier elements found for selected outliers.")
 
@@ -780,8 +944,9 @@ class CheckRMFrame(QWidget):
             self.user_corrections[user_key]['outliers'].append(row_id)
             self.user_corrections[user_key]['non_outliers'] = [x for x in self.user_corrections[user_key]['non_outliers'] if x != row_id]
             self.save_user_corrections()
-            QMessageBox.information(self, "Info", f"Marked row {row_id} as outlier for {user_key}.")
             self.update_outlier_status()
+            QMessageBox.information(self, "Info", f"Marked row {row_id} as outlier for {user_key}.")
+            logger.debug(f"Marked row {row_id} as outlier for {user_key}")
 
     def mark_as_non_outlier(self):
         """Mark an outlier point as a non-outlier."""
@@ -805,8 +970,9 @@ class CheckRMFrame(QWidget):
             self.user_corrections[user_key]['non_outliers'].append(row_id)
             self.user_corrections[user_key]['outliers'] = [x for x in self.user_corrections[user_key]['outliers'] if x != row_id]
             self.save_user_corrections()
-            QMessageBox.information(self, "Info", f"Marked row {row_id} as non-outlier for {user_key}.")
             self.update_outlier_status()
+            QMessageBox.information(self, "Info", f"Marked row {row_id} as non-outlier for {user_key}.")
+            logger.debug(f"Marked row {row_id} as non-outlier for {user_key}")
 
     def skip_selected_outlier(self):
         """Skip a selected outlier."""
@@ -826,22 +992,32 @@ class CheckRMFrame(QWidget):
         if self.current_label not in self.ignored_outliers:
             self.ignored_outliers[self.current_label] = set()
         self.ignored_outliers[self.current_label].add(row_id)
-        QMessageBox.information(self, "Info", f"Ignored outlier at row {row_id} for {self.current_label}:{self.selected_element}.")
         self.update_outlier_status()
+        QMessageBox.information(self, "Info", f"Ignored outlier at row {row_id} for {self.current_label}:{self.selected_element}.")
+        logger.debug(f"Ignored outlier at row {row_id} for {self.current_label}:{self.selected_element}")
 
     def update_outlier_status(self):
-        """Update outlier status and refresh tables."""
+        """Update outlier status and refresh tables and plots."""
+        try:
+            threshold_percent = float(self.threshold_entry.text())
+            threshold = threshold_percent / 100
+        except ValueError:
+            threshold = 0.02
+
         if not self.current_label or not self.selected_element:
+            logger.warning("No current label or element selected for updating outlier status")
             return
 
         label_df = self.rm_df[self.rm_df['Solution Label'] == self.current_label].sort_values('row_id')
         if label_df.empty:
+            logger.warning(f"No data for label {self.current_label}")
             return
 
         row_ids = label_df['row_id'].values
         values = pd.to_numeric(label_df[self.selected_element], errors='coerce').values
         valid_mask = ~np.isnan(values)
         if np.sum(valid_mask) < 2:
+            logger.warning(f"Insufficient valid data for {self.selected_element} in {self.current_label}")
             return
 
         valid_values = values[valid_mask]
@@ -855,8 +1031,7 @@ class CheckRMFrame(QWidget):
         coefficients = np.polyfit(valid_row_ids, valid_values, 1)
         trendline = np.polyval(coefficients, valid_row_ids)
         residuals = valid_values - trendline
-        residual_std = np.std(residuals) if len(residuals) > 0 else 1.0
-        outlier_mask = np.abs(residuals) > float(self.threshold_entry.text()) * residual_std
+        outlier_mask = np.abs(residuals / (trendline + 1e-10)) > threshold
         outlier_mask |= np.isin(valid_row_ids, list(user_outliers))
         outlier_mask &= ~np.isin(valid_row_ids, list(user_non_outliers))
         outlier_mask |= np.isin(valid_row_ids, list(ignored_outliers))
@@ -907,6 +1082,7 @@ class CheckRMFrame(QWidget):
         between_condition = self.get_first_non_outlier_condition(self.current_label, self.selected_element)
         between_df = self.corrected_df[between_condition & (self.corrected_df['Element'] == self.selected_element)]
         self.display_between_df(between_df)
+        logger.debug("Outlier status updated")
 
     def plot_trend(self, element):
         """Plot trend for the specified element in the current label."""
@@ -915,103 +1091,106 @@ class CheckRMFrame(QWidget):
             return
 
         def render_plot():
-            # Clear existing plot
             for widget in self.plot_frame.findChildren(QWidget):
                 widget.deleteLater()
 
-            # Filter data for the current label
-            label_df = self.rm_df[self.rm_df['Solution Label'] == self.current_label].sort_values('row_id')
-            if label_df.empty:
+            try:
+                threshold_percent = float(self.threshold_entry.text())
+                threshold = threshold_percent / 100
+            except ValueError:
+                threshold = 0.02
+
+            label_df_original = self.rm_df[self.rm_df['Solution Label'] == self.current_label].sort_values('row_id')
+            if label_df_original.empty:
                 QMessageBox.critical(self, "Error", f"No data found for {self.current_label}.")
                 return
 
-            # Extract row IDs and values
-            sample_index = np.array(label_df['row_id'])
-            values = pd.to_numeric(label_df[element], errors='coerce').values
-            valid_mask = ~np.isnan(values)
+            sample_index = np.array(label_df_original['row_id'])
+            values_original = pd.to_numeric(label_df_original[element], errors='coerce').values
+            valid_mask = ~np.isnan(values_original)
             if np.sum(valid_mask) < 2:
                 QMessageBox.information(self, "Info", f"Insufficient valid data for {element} in {self.current_label}.")
                 return
 
             valid_sample_index = sample_index[valid_mask]
-            valid_values = values[valid_mask]
+            valid_values_original = values_original[valid_mask]
 
-            # Identify outliers
+            corrected_condition = (self.corrected_df['Solution Label'] == self.current_label) & (self.corrected_df['Element'] == element)
+            corrected_df_label = self.corrected_df[corrected_condition].sort_values('row_id')
+            values_corrected = pd.to_numeric(corrected_df_label['Corr Con'], errors='coerce').values
+            if len(values_corrected) != len(values_original):
+                QMessageBox.warning(self, "Warning", "Mismatch in original and corrected data lengths.")
+                return
+            valid_values_corrected = values_corrected[valid_mask]
+
             user_key = f"{self.current_label}:{element}"
             user_outliers = set(self.user_corrections.get(user_key, {}).get('outliers', []))
             user_non_outliers = set(self.user_corrections.get(user_key, {}).get('non_outliers', []))
             ignored_outliers = set(self.ignored_outliers.get(self.current_label, set()))
 
-            coefficients = np.polyfit(valid_sample_index, valid_values, 1)
+            coefficients = np.polyfit(valid_sample_index, valid_values_original, 1)
             trendline = np.polyval(coefficients, valid_sample_index)
-            residuals = valid_values - trendline
-            residual_std = np.std(residuals) if len(residuals) > 0 else 1.0
-            try:
-                threshold_sigma = float(self.threshold_entry.text())
-            except ValueError:
-                threshold_sigma = 2.0
-            outlier_mask = np.abs(residuals) > threshold_sigma * residual_std
+            residuals = valid_values_original - trendline
+            outlier_mask = np.abs(residuals / (trendline + 1e-10)) > threshold
             outlier_mask |= np.isin(valid_sample_index, list(user_outliers))
             outlier_mask &= ~np.isin(valid_sample_index, list(user_non_outliers))
             outlier_mask |= np.isin(valid_sample_index, list(ignored_outliers))
 
             non_outlier_mask = ~outlier_mask
             valid_sample_index_no_outliers = valid_sample_index[non_outlier_mask]
-            valid_values_no_outliers = valid_values[non_outlier_mask]
+            valid_values_original_no_outliers = valid_values_original[non_outlier_mask]
+            valid_values_corrected_no_outliers = valid_values_corrected[non_outlier_mask]
 
-            if len(valid_values_no_outliers) < 1:
+            if len(valid_values_corrected_no_outliers) < 1:
                 QMessageBox.information(self, "Info", f"No non-outlier data available for {element} in {self.current_label}.")
                 return
 
-            # Calculate trendlines
-            coefficients_before = np.polyfit(valid_sample_index, valid_values, 1)
+            coefficients_before = np.polyfit(valid_sample_index, valid_values_original, 1)
             trendline_before = np.polyval(coefficients_before, valid_sample_index)
-            coefficients_after = np.polyfit(valid_sample_index_no_outliers, valid_values_no_outliers, 1) if len(valid_values_no_outliers) >= 2 else coefficients_before
+
+            if len(valid_sample_index_no_outliers) >= 2:
+                coefficients_after = np.polyfit(valid_sample_index_no_outliers, valid_values_corrected_no_outliers, 1)
+            else:
+                mean_val = np.mean(valid_values_corrected_no_outliers) if len(valid_values_corrected_no_outliers) > 0 else 0
+                coefficients_after = [0, mean_val]
+
             trendline_after = np.polyval(coefficients_after, valid_sample_index)
 
-            # Create chart
             chart = QChart()
             chart.setTitle(f"Trend for {element} ({self.current_label})")
 
-            # Plot all points (before correction)
             before_series = QLineSeries()
             before_series.setName(f"{element}")
-            for i, val in enumerate(valid_values[non_outlier_mask]):
-                before_series.append(valid_sample_index[non_outlier_mask][i], val)
+            for i, val in enumerate(valid_values_original_no_outliers):
+                before_series.append(valid_sample_index_no_outliers[i], val)
 
-            # Plot outliers
             outlier_series = QScatterSeries()
             outlier_series.setName("Outliers")
             outlier_series.setMarkerSize(8)
-            for i, val in enumerate(valid_values[outlier_mask]):
+            for i, val in enumerate(valid_values_original[outlier_mask]):
                 outlier_series.append(valid_sample_index[outlier_mask][i], val)
 
-            # Plot trendline before correction
             trendline_before_series = QLineSeries()
-            trendline_before_series.setName(f"Trendline (slope={coefficients_before[0]:.3f})")
+            trendline_before_series.setName(f"Trendline Before (slope={coefficients_before[0]:.3f})")
             for i, val in enumerate(trendline_before):
                 trendline_before_series.append(valid_sample_index[i], val)
 
-            # Plot non-outlier points (after correction)
             after_series = QLineSeries()
-            after_series.setName(f"{element} (No Outliers)")
-            for i, val in enumerate(valid_values_no_outliers):
+            after_series.setName(f"{element} (Corrected)")
+            for i, val in enumerate(valid_values_corrected_no_outliers):
                 after_series.append(valid_sample_index_no_outliers[i], val)
 
-            # Plot trendline after correction
             trendline_after_series = QLineSeries()
-            trendline_after_series.setName(f"Trendline (slope={coefficients_after[0]:.3f})")
+            trendline_after_series.setName(f"Trendline After (slope={coefficients_after[0]:.3f})")
             for i, val in enumerate(trendline_after):
                 trendline_after_series.append(valid_sample_index[i], val)
 
-            # Add series to chart
             chart.addSeries(before_series)
             chart.addSeries(outlier_series)
             chart.addSeries(trendline_before_series)
             chart.addSeries(after_series)
             chart.addSeries(trendline_after_series)
 
-            # Configure axes
             axis_x = QCategoryAxis()
             axis_x.setTitleText("Row ID")
             for idx in valid_sample_index:
@@ -1020,8 +1199,8 @@ class CheckRMFrame(QWidget):
 
             axis_y = QValueAxis()
             axis_y.setTitleText(element)
-            y_min = np.min(valid_values) - 0.1 * (np.max(valid_values) - np.min(valid_values))
-            y_max = np.max(valid_values) + 0.1 * (np.max(valid_values) - np.min(valid_values))
+            y_min = min(np.min(valid_values_original), np.min(valid_values_corrected)) - 0.1 * (max(np.max(valid_values_original), np.max(valid_values_corrected)) - min(np.min(valid_values_original), np.min(valid_values_corrected)))
+            y_max = max(np.max(valid_values_original), np.max(valid_values_corrected)) + 0.1 * (max(np.max(valid_values_original), np.max(valid_values_corrected)) - min(np.min(valid_values_original), np.min(valid_values_corrected)))
             axis_y.setRange(y_min, y_max)
 
             chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
@@ -1030,10 +1209,10 @@ class CheckRMFrame(QWidget):
                 series.attachAxis(axis_x)
                 series.attachAxis(axis_y)
 
-            # Create and add chart view
             chart_view = QChartView(chart)
             chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
             self.plot_layout.addWidget(chart_view)
+            logger.debug(f"Trend plot rendered for {element} in {self.current_label}")
 
-        # Render plot asynchronously to avoid UI freeze
         QTimer.singleShot(0, render_plot)
+

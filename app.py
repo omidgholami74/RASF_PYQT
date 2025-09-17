@@ -59,11 +59,6 @@ class MainWindow(QMainWindow):
             },
             "pivot": {
                 "Display": self.pivot_tab,
-                "Export": self.pivot_tab.export_pivot,
-                "Check CRM": self.pivot_tab.check_rm,
-                "Clear CRM Inline": self.pivot_tab.clear_inline_crm,
-                "Row Filter": self.pivot_tab.open_row_filter_window,
-                "Column Filter": self.pivot_tab.open_column_filter_window
             },
             "CRM": {
                 "CRM": self.crm_tab,

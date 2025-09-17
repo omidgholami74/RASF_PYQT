@@ -12,5 +12,11 @@
             10
         ],
         "non_outliers": []
+    },
+    "RM1:Ca 317.933": {
+        "outliers": [],
+        "non_outliers": [
+            4
+        ]
     }
 }

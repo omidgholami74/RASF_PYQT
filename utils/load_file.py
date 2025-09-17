@@ -3,7 +3,7 @@ import csv
 import os
 import logging
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
-
+from screens.pivot.pivot_creator import PivotCreator
 # Setup logging
 logger = logging.getLogger(__name__)
 
@@ -199,11 +199,8 @@ def load_excel(app):
                 pivot_subtabs = app.main_content.tab_subtab_map["pivot"]["widgets"]
                 if "Display" in pivot_subtabs:
                     # Ensure pivot_tab is reset and updated
-                    if hasattr(app.pivot_tab, 'reset_cache'):
-                        app.main_content.switch_subtab("Display", "pivot")  # Show pivot table
-                        app.pivot_tab.reset_cache()
-                    if hasattr(app.pivot_tab, 'create_pivot'):
-                        app.pivot_tab.create_pivot()
+                    pivot_creator = PivotCreator(app.pivot_tab)
+                    pivot_creator.create_pivot()
             
             # Trigger CRM tab updates
             if "CRM" in app.main_content.tab_subtab_map:

@@ -227,8 +227,7 @@ class ElementsTab(QWidget):
             logger.error("Invalid DataFrame provided")
             return None
         try:
-            print(df)
-            df = df[['Type', 'Element', 'Solution Label', 'Corr Con']].copy()
+            df = df[['Type', 'Element', 'Solution Label', 'Soln Conc']].copy()
             df = df.dropna(subset=['Type', 'Element'])
             df['Type'] = df['Type'].astype(str).str.strip()
             df['Element'] = df['Element'].astype(str).str.strip()
