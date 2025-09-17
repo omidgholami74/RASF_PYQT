@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, QFrame, QLineEdit, QCheckBox, QDialog, QHeaderView,QTableView)
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,QMessageBox, QComboBox, QLabel, QFrame, QLineEdit, QCheckBox, QDialog, QHeaderView,QTableView)
 from PyQt6.QtGui import QFont
 from PyQt6.QtCore import Qt
 from .freeze_table_widget import FreezeTableWidget
@@ -11,6 +11,7 @@ from .pivot_exporter import PivotExporter
 from .oxide_factors import oxide_factors
 import pandas as pd
 import logging
+import numpy as np
 
 class PivotTab(QWidget):
     """PivotTab with inline CRM rows, difference coloring, and plot visualization."""
@@ -304,3 +305,79 @@ class PivotTab(QWidget):
         annotations = []
         self.current_plot_dialog = PivotPlotDialog(self, selected_element, annotations)
         self.current_plot_dialog.show()
+
+    def correct_pivot_crm(self):
+        if self.pivot_data is None or self.pivot_data.empty:
+            QMessageBox.warning(self, "Warning", "No pivot data available!")
+            return
+
+        selected_element = self.element_selector.currentText()
+        if not selected_element:
+            QMessageBox.warning(self, "Warning", "Please select an element!")
+            return
+
+        try:
+            max_corr = float(self.max_correction_percent.text()) / 100
+        except ValueError:
+            QMessageBox.warning(self, "Warning", "Invalid max correction percent!")
+            return
+
+        try:
+            self.pivot_data[selected_element] = pd.to_numeric(self.pivot_data[selected_element], errors='coerce')
+            ratios = []
+            problematic_labels = []
+
+            for sol_label, crm_rows in self._inline_crm_rows_display.items():
+                if sol_label not in self.included_crms or not self.included_crms[sol_label].isChecked():
+                    continue
+                pivot_row = self.pivot_data[self.pivot_data['Solution Label'] == sol_label]
+                if pivot_row.empty:
+                    continue
+                pivot_val = pivot_row.iloc[0][selected_element]
+                for row_data, _ in crm_rows:
+                    if isinstance(row_data, list) and row_data and row_data[0].endswith("CRM"):
+                        val = row_data[self.pivot_data.columns.get_loc(selected_element)] if selected_element in self.pivot_data.columns else ""
+                        if val and val.strip() and pd.notna(pivot_val):
+                            try:
+                                check_val = float(val)
+                                pivot_val_float = float(pivot_val)
+                                range_val = self.calculate_dynamic_range(check_val)
+                                lower = check_val - range_val
+                                upper = check_val + range_val
+                                if pivot_val_float < lower:
+                                    ratio = lower / pivot_val_float if pivot_val_float != 0 else float('inf')
+                                    correction = abs(ratio - 1)
+                                    if correction <= max_corr:
+                                        ratios.append(ratio)
+                                        self.pivot_data.loc[self.pivot_data['Solution Label'] == sol_label, selected_element] = pivot_val_float * ratio
+                                    else:
+                                        problematic_labels.append(sol_label)
+                                elif pivot_val_float > upper:
+                                    ratio = upper / pivot_val_float if pivot_val_float != 0 else float('inf')
+                                    correction = abs(ratio - 1)
+                                    if correction <= max_corr:
+                                        ratios.append(ratio)
+                                        self.pivot_data.loc[self.pivot_data['Solution Label'] == sol_label, selected_element] = pivot_val_float * ratio
+                                    else:
+                                        problematic_labels.append(sol_label)
+                            except ValueError:
+                                continue
+
+            if problematic_labels:
+                QMessageBox.warning(self, "Warning", f"CRM has problem in these points (correction exceeds max):\n" + "\n".join(problematic_labels))
+
+            if not ratios:
+                QMessageBox.warning(self, "Warning", "No valid ratios for correction!")
+                return
+
+            avg_ratio = np.mean(ratios)
+            self.pivot_data[selected_element] = self.pivot_data[selected_element].apply(
+                lambda x: x * avg_ratio if pd.notna(x) else x
+            )
+            self.update_pivot_display()
+            if self.current_plot_dialog and self.current_plot_dialog.isVisible():
+                self.current_plot_dialog.update_plot()
+            QMessageBox.information(self, "Success", f"Pivot CRM corrected for {selected_element} with average ratio={avg_ratio:.3f}")
+
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to correct Pivot CRM: {str(e)}")
