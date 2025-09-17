@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QWidget, QFrame, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QLabel, QTableView, QHeaderView, QMessageBox, QMainWindow)
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QStandardItemModel, QStandardItem
-from PyQt6.QtCharts import QChart, QChartView, QLineSeries, QScatterSeries, QValueAxis, QCategoryAxis
+from PyQt6.QtCharts import QChart, QChartView, QLineSeries, QScatterSeries, QValueAxis
 from PyQt6.QtGui import QPainter
 import pandas as pd
 import numpy as np
@@ -43,10 +43,13 @@ class PlotWindow(QMainWindow):
             y_value = row[self.y_column]
             if pd.notna(x_value) and pd.notna(y_value):
                 try:
-                    series.append(float(x_value), float(y_value))
+                    x_float = float(x_value)
+                    y_float = float(y_value)
+                    series.append(x_float, y_float)
                     valid_data += 1
                 except (ValueError, TypeError) as e:
-                    logger.error(f"Error appending data point ({x_value}, {y_value}): {e}")
+                    logger.debug(f"Skipping invalid data point ({x_value}, {y_value}) for {self.y_column}: {e}")
+                    continue
 
         if valid_data == 0:
             logger.warning(f"No valid data to plot for {self.y_column}")
@@ -57,16 +60,16 @@ class PlotWindow(QMainWindow):
         chart.addSeries(series)
 
         axis_x = QValueAxis()
-        axis_x.setTitleText(self.x_column)
+        axis_x.setTitleText("Index")
         axis_x.setLabelFormat("%.0f")
-        x_values = self.df[self.x_column].dropna().astype(float)
+        x_values = pd.to_numeric(self.df[self.x_column], errors='coerce').dropna()
         if not x_values.empty:
             axis_x.setRange(x_values.min(), x_values.max())
 
         axis_y = QValueAxis()
         axis_y.setTitleText(self.y_column)
         axis_y.setLabelFormat("%.3f")
-        y_values = self.df[self.y_column].dropna().astype(float)
+        y_values = pd.to_numeric(self.df[self.y_column], errors='coerce').dropna()
         if not y_values.empty:
             axis_y.setRange(y_values.min(), y_values.max())
 
@@ -332,40 +335,59 @@ class CheckRMFrame(QWidget):
         logger.debug("UI setup completed")
 
     def open_plot_window(self, column):
-        """Open a new scatter plot window for the selected column, skip if no valid data."""
+        """Open a new scatter plot window for the selected column using data from current_between_df."""
         logger.debug(f"open_plot_window called for column: {column}")
         logger.debug(f"current_between_df is None: {self.current_between_df is None}")
-        if self.current_between_df is not None:
-            logger.debug(f"current_between_df shape: {self.current_between_df.shape}")
-            logger.debug(f"current_between_df columns: {self.current_between_df.columns.tolist()}")
 
-        plot_df = self.current_between_df
-        if plot_df is None or plot_df.empty:
-            logger.warning("current_between_df is None or empty, falling back to corrected_df")
-            if self.corrected_df is not None and not self.corrected_df.empty:
-                plot_df = self.corrected_df[
-                    (self.corrected_df['Solution Label'] == self.current_label) &
-                    (self.corrected_df['Element'] == self.selected_element)
-                ]
-            else:
-                logger.warning("No data available for plotting, skipping")
-                return
+        # Use current_between_df directly
+        if self.current_between_df is None or self.current_between_df.empty:
+            logger.debug("current_between_df is None or empty")
+            QMessageBox.warning(self, "Warning", "No data available to plot.")
+            return
+
+        plot_df = self.current_between_df.copy()
+        logger.debug(f"Using current_between_df with {len(plot_df)} rows")
+        logger.debug(f"current_between_df columns: {plot_df.columns.tolist()}")
 
         try:
-            # Ensure column exists
+            # Ensure column exists, add with NaN if missing
             if column not in plot_df.columns:
-                logger.warning(f"Column {column} not in plot_df, adding with NaN")
-                plot_df = plot_df.copy()
+                logger.debug(f"Column {column} not in plot_df, adding with NaN")
                 plot_df[column] = np.nan
 
-            # Check for valid data
-            valid_data = plot_df[['original_index', column]].dropna()
+            # Use index as x-axis
+            plot_df = plot_df.reset_index()
+            plot_df['index'] = plot_df.index
+
+            # Log data state before filtering
+            logger.debug(f"plot_df before filtering: {len(plot_df)} rows")
+            logger.debug(f"NaN count in {column}: {plot_df[column].isna().sum()}")
+            logger.debug(f"NaN count in index: {plot_df['index'].isna().sum()}")
+
+            # Filter for valid data (non-NaN and numeric) using index as x-axis
+            plot_df = plot_df[['index', column]].copy()
+            plot_df['index'] = pd.to_numeric(plot_df['index'], errors='coerce')
+            plot_df[column] = pd.to_numeric(plot_df[column], errors='coerce')
+            valid_data = plot_df.dropna()
+
+            # Log skipped data points
+            skipped_count = len(plot_df) - len(valid_data)
+            if skipped_count > 0:
+                logger.debug(f"Skipped {skipped_count} invalid or NaN data points for column {column}")
+
+            # Check if there is valid data to plot
             if valid_data.empty:
-                logger.warning(f"No valid data for {column}, skipping plot")
+                logger.debug(f"No valid data to plot for column {column}")
+                QMessageBox.warning(self, "Warning", f"No valid data to plot for {column}.")
                 return
 
-            logger.debug(f"Creating PlotWindow for column: {column}")
-            window = PlotWindow(f"Scatter Plot for {column}", plot_df, "original_index", column)
+            # Log valid data
+            logger.debug(f"Valid data for plotting: {len(valid_data)} rows")
+            logger.debug(f"Valid data sample: {valid_data.head().to_dict()}")
+
+            # Create and show the plot window
+            logger.debug(f"Creating PlotWindow for column: {column} with {len(valid_data)} valid data points")
+            window = PlotWindow(f"Scatter Plot for {column}", valid_data, "index", column)
             window.show()
             window.raise_()
             window.activateWindow()
@@ -374,7 +396,7 @@ class CheckRMFrame(QWidget):
             logger.debug(f"Plot window opened for {column} with ID {window_id}")
         except Exception as e:
             logger.error(f"Error creating plot window for {column}: {e}")
-            # Skip silently instead of showing QMessageBox
+            QMessageBox.critical(self, "Error", f"Error plotting {column}: {str(e)}")
             return
 
     def check_rm_changes(self):
@@ -430,6 +452,8 @@ class CheckRMFrame(QWidget):
         for col in numeric_columns:
             df_filtered[col] = pd.to_numeric(df_filtered[col], errors='coerce')
             self.original_df[col] = pd.to_numeric(self.original_df[col], errors='coerce')
+            logger.debug(f"NaN count in {col} (original_df): {self.original_df[col].isna().sum()}")
+            logger.debug(f"NaN count in {col} (df_filtered): {df_filtered[col].isna().sum()}")
 
         self.corrected_df = df_filtered.copy(deep=True)
         self.positions_df = df_filtered.groupby(['Solution Label', 'row_id'])['original_index'].agg(['min', 'max']).reset_index()
@@ -667,123 +691,98 @@ class CheckRMFrame(QWidget):
         logger.debug(f"No non-outlier condition found for {label}:{element}")
         return pd.Series(False, index=self.corrected_df.index)
 
-    def display_ratios(self, label=None, element=None):
-        """Display outlier points and ratios in the ratios_table."""
-        model = QStandardItemModel()
-        model.setHorizontalHeaderLabels(["Solution Label", "Element", "Outlier Point", "Ratio"])
-
-        for key, ratio in self.ratios.items():
-            parts = key.split(':')
-            if len(parts) != 3:
-                continue
-            key_label, key_element, point = parts
-            if label and element and (key_label != label or key_element != element):
-                continue
-            point_display = f"Outlier Point {point}"
-            model.appendRow([
-                QStandardItem(key_label),
-                QStandardItem(key_element),
-                QStandardItem(point_display),
-                QStandardItem("N/A")
-            ])
-
-        self.ratios_table.setModel(model)
-        self.ratios_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        logger.debug(f"Displayed ratios for {label}:{element}")
-
-    def display_non_outlier_ratios(self, label=None, element=None):
-        """Display non-outlier points and ratios in the non_outlier_table."""
-        model = QStandardItemModel()
-        model.setHorizontalHeaderLabels(["Solution Label", "Element", "Non-Outlier Point", "Ratio"])
-
-        for key, ratio in self.non_outlier_ratios.items():
-            parts = key.split(':')
-            if len(parts) != 3:
-                continue
-            key_label, key_element, point = parts
-            if label and element and (key_label != label or key_element != element):
-                continue
-            point_display = f"Non-Outlier Point {point}"
-            model.appendRow([
-                QStandardItem(key_label),
-                QStandardItem(key_element),
-                QStandardItem(point_display),
-                QStandardItem(f"{ratio:.3f}")
-            ])
-
-        self.non_outlier_table.setModel(model)
-        self.non_outlier_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        logger.debug(f"Displayed non-outlier ratios for {label}:{element}")
-
     def display_between_df(self, df):
-        """Display corrected DataFrame in the corrected_table."""
+        """Display corrected DataFrame in the corrected_table and store computed values in current_between_df."""
         logger.debug("Entering display_between_df")
-        self.current_between_df = df.copy() if df is not None and not df.empty else None
-        if self.current_between_df is not None:
-            logger.debug(f"current_between_df updated with {len(self.current_between_df)} rows")
-            logger.debug(f"current_between_df columns: {self.current_between_df.columns.tolist()}")
-            # Ensure all required columns exist
-            for col in ["Previous Corr Con", "Soln Conc", "Intense", "Previous Intense", "Soln Conc (No RM)", "Intense (No RM)"]:
-                if col not in self.current_between_df.columns:
-                    self.current_between_df[col] = np.nan
-        else:
-            logger.debug("current_between_df set to None or empty")
+        # Create a copy of the input DataFrame or initialize an empty one
+        self.current_between_df = df.copy() if df is not None and not df.empty else pd.DataFrame(columns=["Solution Label", "Element", "Previous Corr Con", "Corr Con", "Soln Conc", "Intense", "Previous Intense", "Soln Conc (No RM)", "Intense (No RM)", "row_id", "original_index", "Act Wgt", "Act Vol", "Coeff 1", "Coeff 2"])
+        logger.debug(f"current_between_df initialized with {len(self.current_between_df)} rows")
+        logger.debug(f"current_between_df columns: {self.current_between_df.columns.tolist()}")
 
-        model = QStandardItemModel()
-        columns = ["Solution Label", "Element", "Previous Corr Con", "Corr Con", "Soln Conc", "Intense", 
-                   "Previous Intense", "Soln Conc (No RM)", "Intense (No RM)", "row_id"]
-        model.setHorizontalHeaderLabels(columns)
+        # Ensure all required columns exist in current_between_df
+        required_columns = ["Solution Label", "Element", "Previous Corr Con", "Corr Con", "Soln Conc", "Intense", "Previous Intense", "Soln Conc (No RM)", "Intense (No RM)", "row_id", "original_index", "Act Wgt", "Act Vol", "Coeff 1", "Coeff 2"]
+        for col in required_columns:
+            if col not in self.current_between_df.columns:
+                self.current_between_df[col] = np.nan
+                logger.debug(f"Added missing column {col} with NaN")
 
-        if df is None or df.empty:
-            logger.debug("No data to display in Between Elements Preview table")
-            self.corrected_table.setModel(model)
-            return
+        # Initialize computed columns with NaN
+        self.current_between_df["Previous Corr Con"] = np.nan
+        self.current_between_df["Soln Conc"] = np.nan
+        self.current_between_df["Intense"] = np.nan
+        self.current_between_df["Previous Intense"] = np.nan
+        self.current_between_df["Soln Conc (No RM)"] = np.nan
+        self.current_between_df["Intense (No RM)"] = np.nan
 
-        for _, row in df.iterrows():
+        # Compute values and store in current_between_df
+        for idx, row in self.current_between_df.iterrows():
             original_row = self.original_df[
                 (self.original_df['Solution Label'] == row['Solution Label']) &
                 (self.original_df['Element'] == row['Element']) &
                 (self.original_df['original_index'] == row['original_index'])
             ]
-            if original_row.empty:
-                prev_corr_con = np.nan
-                prev_intense = np.nan
-                soln_conc = np.nan
-                intense = np.nan
-                soln_conc_no_rm = np.nan
-                intense_no_rm = np.nan
+            prev_corr_con = np.nan
+            if not original_row.empty:
+                prev_corr_con = pd.to_numeric(original_row['Corr Con'].iloc[0], errors='coerce')
+                logger.debug(f"Found matching original row for {row['Solution Label']}:{row['Element']}:{row['original_index']}, Prev Corr Con: {prev_corr_con}")
             else:
-                prev_corr_con = original_row['Corr Con'].iloc[0]
-                try:
-                    corr_con = float(row['Corr Con']) if pd.notna(row['Corr Con']) else np.nan
-                    act_wgt = float(row['Act Wgt']) if pd.notna(row['Act Wgt']) else np.nan
-                    act_vol = float(row['Act Vol']) if pd.notna(row['Act Vol']) and row['Act Vol'] != 0 else np.nan
-                    coeff_1 = float(row['Coeff 1']) if pd.notna(row['Coeff 1']) else np.nan
-                    coeff_2 = float(row['Coeff 2']) if pd.notna(row['Coeff 2']) else np.nan
-                    prev_corr_con = float(prev_corr_con) if pd.notna(prev_corr_con) else np.nan
+                logger.debug(f"No matching original row for {row['Solution Label']}:{row['Element']}:{row['original_index']}")
 
-                    soln_conc = corr_con * act_wgt / act_vol if pd.notna(corr_con) and pd.notna(act_wgt) and pd.notna(act_vol) else np.nan
-                    intense = soln_conc * coeff_2 + coeff_1 if pd.notna(soln_conc) and pd.notna(coeff_2) and pd.notna(coeff_1) else np.nan
-                    soln_conc_no_rm = prev_corr_con * act_wgt / act_vol if pd.notna(prev_corr_con) and pd.notna(act_wgt) and pd.notna(act_vol) else np.nan
-                    intense_no_rm = soln_conc_no_rm * coeff_2 + coeff_1 if pd.notna(soln_conc_no_rm) and pd.notna(coeff_2) and pd.notna(coeff_1) else np.nan
-                    prev_intense = soln_conc_no_rm * coeff_2 + coeff_1 if pd.notna(soln_conc_no_rm) and pd.notna(coeff_2) and pd.notna(coeff_1) else np.nan
-                except (TypeError, ValueError):
-                    soln_conc = np.nan
-                    intense = np.nan
-                    soln_conc_no_rm = np.nan
-                    intense_no_rm = np.nan
-                    prev_intense = np.nan
+            try:
+                corr_con = pd.to_numeric(row['Corr Con'], errors='coerce') if pd.notna(row['Corr Con']) else np.nan
+                act_wgt = pd.to_numeric(row['Act Wgt'], errors='coerce') if pd.notna(row['Act Wgt']) else np.nan
+                act_vol = pd.to_numeric(row['Act Vol'], errors='coerce') if pd.notna(row['Act Vol']) and row['Act Vol'] != 0 else np.nan
+                coeff_1 = pd.to_numeric(row['Coeff 1'], errors='coerce') if pd.notna(row['Coeff 1']) else np.nan
+                coeff_2 = pd.to_numeric(row['Coeff 2'], errors='coerce') if pd.notna(row['Coeff 2']) else np.nan
 
+                logger.debug(f"Row {idx} inputs: Corr Con={corr_con}, Act Wgt={act_wgt}, Act Vol={act_vol}, Coeff 1={coeff_1}, Coeff 2={coeff_2}")
+
+                soln_conc = corr_con * act_wgt / act_vol if pd.notna(corr_con) and pd.notna(act_wgt) and pd.notna(act_vol) else np.nan
+                intense = soln_conc * coeff_2 + coeff_1 if pd.notna(soln_conc) and pd.notna(coeff_2) and pd.notna(coeff_1) else np.nan
+                soln_conc_no_rm = prev_corr_con * act_wgt / act_vol if pd.notna(prev_corr_con) and pd.notna(act_wgt) and pd.notna(act_vol) else np.nan
+                intense_no_rm = soln_conc_no_rm * coeff_2 + coeff_1 if pd.notna(soln_conc_no_rm) and pd.notna(coeff_2) and pd.notna(coeff_1) else np.nan
+                prev_intense = soln_conc_no_rm * coeff_2 + coeff_1 if pd.notna(soln_conc_no_rm) and pd.notna(coeff_2) and pd.notna(coeff_1) else np.nan
+
+                # Store computed values in current_between_df
+                self.current_between_df.at[idx, "Previous Corr Con"] = prev_corr_con
+                self.current_between_df.at[idx, "Soln Conc"] = soln_conc
+                self.current_between_df.at[idx, "Intense"] = intense
+                self.current_between_df.at[idx, "Previous Intense"] = prev_intense
+                self.current_between_df.at[idx, "Soln Conc (No RM)"] = soln_conc_no_rm
+                self.current_between_df.at[idx, "Intense (No RM)"] = intense_no_rm
+
+                logger.debug(f"Computed for row {idx}: Soln Conc={soln_conc}, Intense={intense}, Previous Corr Con={prev_corr_con}, Previous Intense={prev_intense}, Soln Conc (No RM)={soln_conc_no_rm}, Intense (No RM)={intense_no_rm}")
+            except (TypeError, ValueError) as e:
+                logger.error(f"Error computing values for row {idx}: {e}")
+
+        # Log NaN counts for numeric columns
+        numeric_cols = ["Previous Corr Con", "Corr Con", "Soln Conc", "Intense", "Previous Intense", "Soln Conc (No RM)", "Intense (No RM)"]
+        for col in numeric_cols:
+            if col in self.current_between_df.columns:
+                logger.debug(f"NaN count in {col}: {self.current_between_df[col].isna().sum()}")
+
+        # Populate the UI table
+        model = QStandardItemModel()
+        columns = ["Solution Label", "Element", "Previous Corr Con", "Corr Con", "Soln Conc", "Intense", 
+                   "Previous Intense", "Soln Conc (No RM)", "Intense (No RM)", "row_id"]
+        model.setHorizontalHeaderLabels(columns)
+
+        if self.current_between_df.empty:
+            logger.debug("No data to display in Between Elements Preview table")
+            self.corrected_table.setModel(model)
+            return
+
+        for _, row in self.current_between_df.iterrows():
             model.appendRow([
                 QStandardItem(str(row['Solution Label'])),
                 QStandardItem(str(row['Element'])),
-                QStandardItem(f"{prev_corr_con:.3f}" if pd.notna(prev_corr_con) else "N/A"),
-                QStandardItem(f"{corr_con:.3f}" if pd.notna(corr_con) else "N/A"),
-                QStandardItem(f"{soln_conc:.3f}" if pd.notna(soln_conc) else "N/A"),
-                QStandardItem(f"{intense:.3f}" if pd.notna(intense) else "N/A"),
-                QStandardItem(f"{prev_intense:.3f}" if pd.notna(prev_intense) else "N/A"),
-                QStandardItem(f"{soln_conc_no_rm:.3f}" if pd.notna(soln_conc_no_rm) else "N/A"),
-                QStandardItem(f"{intense_no_rm:.3f}" if pd.notna(intense_no_rm) else "N/A"),
+                QStandardItem(f"{row['Previous Corr Con']:.3f}" if pd.notna(row['Previous Corr Con']) else "N/A"),
+                QStandardItem(f"{row['Corr Con']:.3f}" if pd.notna(row['Corr Con']) else "N/A"),
+                QStandardItem(f"{row['Soln Conc']:.3f}" if pd.notna(row['Soln Conc']) else "N/A"),
+                QStandardItem(f"{row['Intense']:.3f}" if pd.notna(row['Intense']) else "N/A"),
+                QStandardItem(f"{row['Previous Intense']:.3f}" if pd.notna(row['Previous Intense']) else "N/A"),
+                QStandardItem(f"{row['Soln Conc (No RM)']:.3f}" if pd.notna(row['Soln Conc (No RM)']) else "N/A"),
+                QStandardItem(f"{row['Intense (No RM)']:.3f}" if pd.notna(row['Intense (No RM)']) else "N/A"),
                 QStandardItem(str(row['row_id']))
             ])
 
@@ -1105,7 +1104,8 @@ class CheckRMFrame(QWidget):
                 QMessageBox.critical(self, "Error", f"No data found for {self.current_label}.")
                 return
 
-            sample_index = np.array(label_df_original['row_id'])
+            label_df_original = label_df_original.reset_index()
+            sample_index = np.array(label_df_original.index)
             values_original = pd.to_numeric(label_df_original[element], errors='coerce').values
             valid_mask = ~np.isnan(values_original)
             if np.sum(valid_mask) < 2:
@@ -1191,11 +1191,10 @@ class CheckRMFrame(QWidget):
             chart.addSeries(after_series)
             chart.addSeries(trendline_after_series)
 
-            axis_x = QCategoryAxis()
-            axis_x.setTitleText("Row ID")
-            for idx in valid_sample_index:
-                axis_x.append(f"{self.current_label}-{idx}", idx)
-            axis_x.setLabelsAngle(45)
+            axis_x = QValueAxis()
+            axis_x.setTitleText("Index")
+            axis_x.setLabelFormat("%.0f")
+            axis_x.setRange(valid_sample_index.min(), valid_sample_index.max())
 
             axis_y = QValueAxis()
             axis_y.setTitleText(element)
@@ -1216,3 +1215,48 @@ class CheckRMFrame(QWidget):
 
         QTimer.singleShot(0, render_plot)
 
+    def display_ratios(self, label, element):
+        """Display outlier points and their ratios in the ratios_table."""
+        logger.debug(f"Displaying ratios for {label}:{element}")
+        model = QStandardItemModel()
+        model.setHorizontalHeaderLabels(["Solution Label", "Element", "Point", "Ratio"])
+
+        # Check if there are ratios for the given label and element
+        for key, ratio in self.ratios.items():
+            parts = key.split(':')
+            if len(parts) != 3 or parts[0] != label or parts[1] != element:
+                continue
+            row_id = parts[2]
+            model.appendRow([
+                QStandardItem(str(label)),
+                QStandardItem(str(element)),
+                QStandardItem(f"Outlier Point {row_id}"),
+                QStandardItem(f"{ratio:.3f}" if pd.notna(ratio) else "N/A")
+            ])
+
+        self.ratios_table.setModel(model)
+        self.ratios_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        logger.debug(f"Ratios table populated with {model.rowCount()} rows for {label}:{element}")
+
+    def display_non_outlier_ratios(self, label, element):
+        """Display non-outlier points and their ratios in the non_outlier_table."""
+        logger.debug(f"Displaying non-outlier ratios for {label}:{element}")
+        model = QStandardItemModel()
+        model.setHorizontalHeaderLabels(["Solution Label", "Element", "Point", "Ratio"])
+
+        # Check if there are non-outlier ratios for the given label and element
+        for key, ratio in self.non_outlier_ratios.items():
+            parts = key.split(':')
+            if len(parts) != 3 or parts[0] != label or parts[1] != element:
+                continue
+            point_display = parts[2]
+            model.appendRow([
+                QStandardItem(str(label)),
+                QStandardItem(str(element)),
+                QStandardItem(f"Non-Outlier Point {point_display}"),
+                QStandardItem(f"{ratio:.3f}" if pd.notna(ratio) else "N/A")
+            ])
+
+        self.non_outlier_table.setModel(model)
+        self.non_outlier_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        logger.debug(f"Non-outlier table populated with {model.rowCount()} rows for {label}:{element}")
