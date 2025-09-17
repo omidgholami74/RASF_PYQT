@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import QDialog, QVBoxLayout, QPushButton, QTextEdit
 import re
 
 class ReportDialog(QDialog):
-    """Dialog to display a table-based report with CRM analysis data."""
+    """Dialog to display both text-based and table-based CRM analysis report."""
     def __init__(self, parent, annotations):
         super().__init__(parent)
         self.annotations = annotations
@@ -48,16 +48,52 @@ class ReportDialog(QDialog):
             <style>
                 body { font-family: 'Segoe UI', sans-serif; color: #333; line-height: 1.6; }
                 h1 { color: #007bff; text-align: center; margin-bottom: 20px; }
+                h2 { color: #0056b3; margin-top: 30px; }
+                .report-section { margin-bottom: 30px; border-bottom: 1px solid #dee2e6; padding-bottom: 10px; }
+                .crm-title { font-weight: bold; color: #28a745; }
+                .problematic { color: #dc3545; font-weight: bold; }
+                .in-range { color: #28a745; }
+                .out-range { color: #dc3545; }
                 table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
                 th, td { border: 1px solid #dee2e6; padding: 8px; text-align: left; }
                 th { background-color: #007bff; color: white; }
-                .in-range { color: #28a745; }
-                .out-range { color: #dc3545; }
-                .problematic { color: #dc3545; font-weight: bold; }
             </style>
         </head>
         <body>
             <h1>CRM Analysis Report</h1>
+            <h2>Text Report</h2>
+        """
+        
+        # Text-based report
+        for annotation in self.annotations:
+            lines = annotation.split('\n')
+            crm_header = lines[0].strip()
+            details = lines[1:] if len(lines) > 1 else []
+            
+            html += f'<div class="report-section">'
+            html += f'<span class="crm-title">{crm_header}</span><br>'
+            
+            for detail in details:
+                detail = detail.strip()
+                if not detail:
+                    continue
+                if "in range" in detail:
+                    html += f'<span class="in-range">{detail}</span><br>'
+                elif "out of range" in detail:
+                    html += f'<span class="out-range">{detail}</span><br>'
+                elif "Scaling needed" in detail:
+                    if "problematic" in detail:
+                        html += f'<span class="problematic">{detail}</span><br>'
+                    else:
+                        html += f'<span>{detail}</span><br>'
+                else:
+                    html += f'{detail}<br>'
+            
+            html += '</div>'
+        
+        # Table-based report
+        html += """
+            <h2>Table Report</h2>
             <table>
                 <tr>
                     <th>Verification ID</th>
@@ -74,16 +110,13 @@ class ReportDialog(QDialog):
         """
         
         for annotation in self.annotations:
-            # Parse annotation
             lines = annotation.split('\n')
             if not lines:
                 continue
             
-            # Extract Verification ID
             verification_id_match = re.match(r'Verification ID: (\w+) \(Label: .+\)', lines[0].strip())
             verification_id = verification_id_match.group(1) if verification_id_match else "Unknown"
             
-            # Initialize defaults
             check_val = pivot_val = orig_range = status = blank_val = corrected_val = corrected_range = corrected_status = scaling = ""
             
             for line in lines[1:]:

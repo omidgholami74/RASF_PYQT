@@ -2902,9 +2902,45 @@
    'C:\\Users\\hp\\Desktop\\omid gholami\\RASF_pyqt\\screens\\compare_tab.py',
    'PYMODULE'),
   ('screens.pivot', '-', 'PYMODULE'),
+  ('screens.pivot.crm_manager',
+   'C:\\Users\\hp\\Desktop\\omid '
+   'gholami\\RASF_pyqt\\screens\\pivot\\crm_manager.py',
+   'PYMODULE'),
+  ('screens.pivot.filter_dialog',
+   'C:\\Users\\hp\\Desktop\\omid '
+   'gholami\\RASF_pyqt\\screens\\pivot\\filter_dialog.py',
+   'PYMODULE'),
+  ('screens.pivot.freeze_table_widget',
+   'C:\\Users\\hp\\Desktop\\omid '
+   'gholami\\RASF_pyqt\\screens\\pivot\\freeze_table_widget.py',
+   'PYMODULE'),
+  ('screens.pivot.oxide_factors',
+   'C:\\Users\\hp\\Desktop\\omid '
+   'gholami\\RASF_pyqt\\screens\\pivot\\oxide_factors.py',
+   'PYMODULE'),
+  ('screens.pivot.pivot_creator',
+   'C:\\Users\\hp\\Desktop\\omid '
+   'gholami\\RASF_pyqt\\screens\\pivot\\pivot_creator.py',
+   'PYMODULE'),
+  ('screens.pivot.pivot_exporter',
+   'C:\\Users\\hp\\Desktop\\omid '
+   'gholami\\RASF_pyqt\\screens\\pivot\\pivot_exporter.py',
+   'PYMODULE'),
+  ('screens.pivot.pivot_plot_dialog',
+   'C:\\Users\\hp\\Desktop\\omid '
+   'gholami\\RASF_pyqt\\screens\\pivot\\pivot_plot_dialog.py',
+   'PYMODULE'),
   ('screens.pivot.pivot_tab',
    'C:\\Users\\hp\\Desktop\\omid '
    'gholami\\RASF_pyqt\\screens\\pivot\\pivot_tab.py',
+   'PYMODULE'),
+  ('screens.pivot.pivot_table_model',
+   'C:\\Users\\hp\\Desktop\\omid '
+   'gholami\\RASF_pyqt\\screens\\pivot\\pivot_table_model.py',
+   'PYMODULE'),
+  ('screens.pivot.report_dialog',
+   'C:\\Users\\hp\\Desktop\\omid '
+   'gholami\\RASF_pyqt\\screens\\pivot\\report_dialog.py',
    'PYMODULE'),
   ('screens.process', '-', 'PYMODULE'),
   ('screens.process.DF_check',
