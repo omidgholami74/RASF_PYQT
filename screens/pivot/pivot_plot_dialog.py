@@ -1,32 +1,19 @@
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QCheckBox, QLabel, QLineEdit, QPushButton, QMessageBox
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPen, QColor,QPainter
-from PyQt6.QtCharts import QChart, QLineSeries, QScatterSeries, QValueAxis, QCategoryAxis,QChartView
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QCheckBox, QLabel, QLineEdit, QPushButton, QMessageBox, QToolTip
+from PyQt6.QtCore import Qt, QPointF
+from PyQt6.QtGui import QPen, QColor, QPainter
+from PyQt6.QtCharts import QChart, QScatterSeries, QValueAxis, QCategoryAxis,QChartView
 import re
-import numpy as np
 import pandas as pd
 
-class ZoomableChartView(QChartView):
-    """Custom QChartView with mouse wheel zoom."""
-    def __init__(self, chart, parent=None):
-        super().__init__(chart, parent)
-        self.setMouseTracking(True)
-        self.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-    def wheelEvent(self, event):
-        factor = 1.1 if event.angleDelta().y() > 0 else 1 / 1.1
-        self.chart().zoom(factor)
-
 class PivotPlotDialog(QDialog):
-    """Dialog for plotting CRM data with a separate difference plot using PyQt6 QtCharts."""
+    """Dialog for plotting Verification data with a separate difference plot using PyQt6 QtCharts."""
     def __init__(self, parent, selected_element, annotations):
         super().__init__(parent)
         self.parent = parent
         self.selected_element = selected_element
         self.annotations = annotations
-        self.setWindowTitle(f"CRM Plot for {selected_element}")
+        self.setWindowTitle(f"Verification Plot for {selected_element}")
         self.setGeometry(100, 100, 1400, 900)
-        self.setWindowState(Qt.WindowState.WindowFullScreen)
         self.setModal(False)
         self.setup_ui()
 
@@ -34,11 +21,11 @@ class PivotPlotDialog(QDialog):
         layout = QVBoxLayout(self)
         
         control_frame = QHBoxLayout()
-        self.show_check_crm = QCheckBox("Show Check CRM", checked=True)
+        self.show_check_crm = QCheckBox("Show Check Verification", checked=True)
         self.show_check_crm.toggled.connect(self.update_plot)
         control_frame.addWidget(self.show_check_crm)
         
-        self.show_pivot_crm = QCheckBox("Show Pivot CRM", checked=True)
+        self.show_pivot_crm = QCheckBox("Show Pivot Verification", checked=True)
         self.show_pivot_crm.toggled.connect(self.update_plot)
         control_frame.addWidget(self.show_pivot_crm)
         
@@ -58,11 +45,11 @@ class PivotPlotDialog(QDialog):
         self.max_correction_percent = QLineEdit("32")
         control_frame.addWidget(self.max_correction_percent)
         
-        correct_btn = QPushButton("Correct Pivot CRM")
+        correct_btn = QPushButton("Correct Pivot Verification")
         correct_btn.clicked.connect(self.correct_crm_callback)
         control_frame.addWidget(correct_btn)
         
-        select_crms_btn = QPushButton("Select CRMs")
+        select_crms_btn = QPushButton("Select Verifications")
         select_crms_btn.clicked.connect(self.open_select_crms_window)
         control_frame.addWidget(select_crms_btn)
         
@@ -70,30 +57,26 @@ class PivotPlotDialog(QDialog):
         report_btn.clicked.connect(self.show_report)
         control_frame.addWidget(report_btn)
         
-        zoom_out_btn = QPushButton("Zoom Out")
-        zoom_out_btn.clicked.connect(self.zoom_out)
-        control_frame.addWidget(zoom_out_btn)
-        
         layout.addLayout(control_frame)
         
         self.chart = QChart()
-        self.chart_view = ZoomableChartView(self.chart)
+        self.chart_view = QChartView(self.chart)
+        self.chart_view.setMouseTracking(True)
+        self.chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
         layout.addWidget(self.chart_view)
         
         self.diff_chart = QChart()
-        self.diff_chart_view = ZoomableChartView(self.diff_chart)
+        self.diff_chart_view = QChartView(self.diff_chart)
+        self.diff_chart_view.setMouseTracking(True)
+        self.diff_chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
         layout.addWidget(self.diff_chart_view)
         
         self.update_plot()
 
     def show_report(self):
-        from report_dialog import ReportDialog
+        from .report_dialog import ReportDialog
         dialog = ReportDialog(self, self.annotations)
         dialog.exec()
-
-    def zoom_out(self):
-        self.chart.zoomReset()
-        self.diff_chart.zoomReset()
 
     def correct_crm_callback(self):
         self.parent.correct_pivot_crm()
@@ -114,26 +97,45 @@ class PivotPlotDialog(QDialog):
             self.annotations.clear()
 
             def extract_crm_id(label):
-                m = re.search(r'(\d+)', str(label).replace(' ', ''), re.IGNORECASE)
+                m = re.search(r'(?i)(?:CRM|par|OREAS)[\s-]*(\d+[a-zA-Z]?)', str(label))
                 return m.group(1) if m else None
 
             crm_groups = {}
             blank_values = {}
 
-            blank_rows = self.parent.pivot_data[self.parent.pivot_data['Solution Label'].str.contains(r'CRM\s*BLANK', case=False, na=False, regex=True)]
-            for _, row in blank_rows.iterrows():
-                bid = extract_crm_id(row['Solution Label'])
-                if bid:
-                    blank_val = row[self.selected_element] if pd.notna(row[self.selected_element]) else 0
-                    blank_values[bid] = blank_val
+            # Step 1: Collect blank rows
+            blank_rows = self.parent.pivot_data[
+                self.parent.pivot_data['Solution Label'].str.contains(r'CRM\s*BLANK', case=False, na=False, regex=True)
+            ]
+            print("Blank rows:", blank_rows)
 
-            crm_labels = [label for label in self.parent._inline_crm_rows_display.keys() 
-                          if ('CRM' in label.upper() or 'par' in label.lower()) 
-                          and label not in blank_rows['Solution Label'].values]
+            # Step 2: Get the first blank row's value
+            blank_val = 0
+            if not blank_rows.empty:
+                first_blank_row = blank_rows.iloc[0]
+                blank_val = first_blank_row[self.selected_element] if pd.notna(first_blank_row[self.selected_element]) else 0
+                blank_val = float(blank_val) if blank_val else 0
+            print(f"Selected Blank Value: {blank_val}")
+
+            # Step 3: Assign the same blank value to all crm_ids
+            crm_ids = set()
+            for sol_label in self.parent._inline_crm_rows_display.keys():
+                crm_id = extract_crm_id(sol_label)
+                if crm_id:
+                    crm_ids.add(crm_id)
+                    blank_values[crm_id] = blank_val
+
+            crm_labels = [
+                label for label in self.parent._inline_crm_rows_display.keys()
+                if ('CRM' in label.upper() or 'par' in label.lower())
+                and label not in blank_rows['Solution Label'].values
+                and label in self.parent.included_crms and self.parent.included_crms[label].isChecked()
+            ]
+
+            y_values = []  # For main chart y-axis range
+            diff_values = []  # For difference chart y-axis range
 
             for sol_label in crm_labels:
-                if sol_label not in self.parent.included_crms or not self.parent.included_crms[sol_label].isChecked():
-                    continue
                 pivot_row = self.parent.pivot_data[self.parent.pivot_data['Solution Label'] == sol_label]
                 if pivot_row.empty:
                     continue
@@ -156,26 +158,26 @@ class PivotPlotDialog(QDialog):
                                     upper = crm_val + range_val
                                     in_range = lower <= pivot_val_float <= upper
                                     color = QColor("green") if in_range else QColor("red")
-                                    
+
                                     blank_val = blank_values.get(crm_id, 0)
                                     corrected_crm = crm_val - blank_val
                                     corrected_range_val = self.parent.calculate_dynamic_range(corrected_crm)
                                     corrected_lower = corrected_crm - corrected_range_val
                                     corrected_upper = corrected_crm + corrected_range_val
                                     corrected_in_range = corrected_lower <= pivot_val_float <= corrected_upper
-                                    
-                                    annotation = f"CRM ID: {crm_id} (Label: {sol_label})"
-                                    annotation += f"\n  - Check CRM Value: {crm_val:.4f}"
-                                    annotation += f"\n  - Pivot CRM Value: {pivot_val_float:.4f}"
+
+                                    annotation = f"Verification ID: {crm_id} (Label: {sol_label})"
+                                    annotation += f"\n  - Check Verification Value: {crm_val:.4f}"
+                                    annotation += f"\n  - Pivot Verification Value: {pivot_val_float:.4f}"
                                     annotation += f"\n  - Original Range: [{lower:.4f} to {upper:.4f}]"
                                     if in_range:
                                         annotation += "\n  - Status: In range (no adjustment needed)."
                                     else:
                                         annotation += "\n  - Status: Out of range without adjustment."
-                                    
+
                                     if blank_val != 0:
                                         annotation += f"\n  - Blank Value Subtracted: {blank_val:.4f}"
-                                        annotation += f"\n  - Corrected CRM Value: {corrected_crm:.4f}"
+                                        annotation += f"\n  - Corrected Verification Value: {corrected_crm:.4f}"
                                         annotation += f"\n  - Corrected Range: [{corrected_lower:.4f} to {corrected_upper:.4f}]"
                                         if corrected_in_range:
                                             annotation += "\n  - Status after Blank Subtraction: In range."
@@ -199,9 +201,8 @@ class PivotPlotDialog(QDialog):
                                                 annotation += "\n  - Scaling not applicable (pivot value is zero)."
                                     else:
                                         annotation += "\n  - No blank subtraction applied (Blank Value: 0)."
-                                    
+
                                     self.annotations.append(annotation)
-                                    
                                     crm_groups[crm_id].append({
                                         'label': sol_label,
                                         'crm_val': crm_val,
@@ -210,185 +211,216 @@ class PivotPlotDialog(QDialog):
                                         'annotation': annotation,
                                         'blank_sub': blank_val != 0
                                     })
+                                    y_values.extend([crm_val, pivot_val_float, (crm_val + pivot_val_float) / 2, lower, upper])
+                                    if crm_val != 0:
+                                        diff = ((crm_val - pivot_val_float) / crm_val) * 100
+                                        diff_values.append(diff)
                             except ValueError:
                                 continue
 
             if not crm_groups:
-                pivot_data = self.parent.pivot_data[self.parent.pivot_data['Solution Label'].str.contains('CRM|par', case=False, na=False)]
+                pivot_data = self.parent.pivot_data[
+                    self.parent.pivot_data['Solution Label'].str.contains('CRM|par', case=False, na=False)
+                ]
                 if not pivot_data.empty and self.show_pivot_crm.isChecked():
-                    series = QLineSeries()
-                    series.setName(f"{self.selected_element} (Pivot CRM)")
-                    series.setPen(QPen(QColor("blue"), 2))
-                    for i, (_, row) in enumerate(pivot_data.iterrows()):
-                        val = row[self.selected_element]
-                        try:
-                            if pd.notna(val):
-                                series.append(i + 0.5, float(val))
-                        except ValueError:
-                            continue
-                    if series.count() > 0:
-                        self.chart.addSeries(series)
+                    scatter = QScatterSeries()
+                    scatter.setName(f"{self.selected_element} (Pivot Verification)")
+                    scatter.setMarkerShape(QScatterSeries.MarkerShape.MarkerShapeCircle)
+                    scatter.setMarkerSize(8)
+                    scatter.setPen(QPen(QColor("blue")))
+                    sorted_ids = sorted(set(extract_crm_id(row['Solution Label']) for _, row in pivot_data.iterrows() if extract_crm_id(row['Solution Label'])), key=lambda x: (int(re.search(r'\d+', x).group()), x))
+                    for i, crm_id in enumerate(sorted_ids):
+                        for _, row in pivot_data.iterrows():
+                            if extract_crm_id(row['Solution Label']) == crm_id:
+                                val = row[self.selected_element]
+                                try:
+                                    if pd.notna(val):
+                                        scatter.append(i + 0.5, float(val))
+                                        y_values.append(float(val))
+                                except ValueError:
+                                    continue
+                    if scatter.count() > 0:
+                        self.chart.addSeries(scatter)
                         axis_x = QCategoryAxis()
-                        for i, (_, row) in enumerate(pivot_data.iterrows()):
-                            axis_x.append(extract_crm_id(row['Solution Label']) or row['Solution Label'], i + 0.5)
+                        for i, crm_id in enumerate(sorted_ids):
+                            axis_x.append(f"Verification {crm_id}", i + 0.5)
                         axis_x.setLabelsAngle(45)
                         axis_y = QValueAxis()
                         axis_y.setTitleText(f"{self.selected_element} Value")
+                        if y_values:
+                            y_min = min(y_values)
+                            y_max = max(y_values)
+                            margin = (y_max - y_min) * 0.1
+                            axis_y.setRange(y_min - margin, y_max + margin)
                         self.chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
                         self.chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
-                        series.attachAxis(axis_x)
-                        series.attachAxis(axis_y)
-                        self.chart.setTitle(f"Pivot CRM Values for {self.selected_element}")
+                        scatter.attachAxis(axis_x)
+                        scatter.attachAxis(axis_y)
+                        scatter.hovered.connect(lambda point: QToolTip.showText(
+                            self.chart_view.mapToGlobal(self.chart_view.mapFromScene(point)),
+                            f"Pivot Verification: {point.y():.4f}"
+                        ))
+                        self.chart.setTitle(f"Pivot Verification Values for {self.selected_element}")
                         self.chart_view.update()
                         self.diff_chart.setTitle("No difference data available")
                         self.diff_chart_view.update()
                         return
-                self.chart.setTitle(f"No valid CRM data for {self.selected_element}")
+                self.chart.setTitle(f"No valid Verification data for {self.selected_element}")
                 self.chart_view.update()
                 self.diff_chart.setTitle("No difference data available")
                 self.diff_chart_view.update()
-                QMessageBox.warning(self, "Warning", f"No valid CRM data for {self.selected_element}")
+                QMessageBox.warning(self, "Warning", f"No valid Verification data for {self.selected_element}")
                 return
 
-            sorted_ids = sorted(crm_groups.keys(), key=lambda x: int(x))
-            labels = [f"CRM {id}" for id in sorted_ids]
-            positions = list(range(len(sorted_ids)))
-
-            agg_crm_vals = []
-            agg_pivot_vals = []
-            agg_colors = []
-            agg_annotations = []
-
-            for pos, cid in enumerate(sorted_ids):
-                group = crm_groups[cid]
-                if not group:
-                    continue
-                avg_crm = np.mean([p['crm_val'] for p in group])
-                avg_pivot = np.mean([p['pivot_val'] for p in group])
-                color = group[0]['color']
-                annotation = group[0]['annotation']
-                agg_crm_vals.append(avg_crm)
-                agg_pivot_vals.append(avg_pivot)
-                agg_colors.append(color)
-                agg_annotations.append(annotation)
-
-            if not agg_crm_vals:
-                self.chart.setTitle(f"No valid data for {self.selected_element}")
-                self.chart_view.update()
-                self.diff_chart.setTitle("No difference data available")
-                self.diff_chart_view.update()
-                QMessageBox.warning(self, "Warning", f"No valid data for {self.selected_element}")
-                return
-
-            middle_values = [(disp_val + piv_val) / 2 if disp_val != 0 and piv_val != 0 else disp_val or piv_val or 0
-                             for disp_val, piv_val in zip(agg_crm_vals, agg_pivot_vals)]
-            range_lower = [val - self.parent.calculate_dynamic_range(val) for val in agg_crm_vals]
-            range_upper = [val + self.parent.calculate_dynamic_range(val) for val in agg_crm_vals]
-            diff_values = [((crm_val - piv_val) / crm_val) * 100 if crm_val != 0 else 0
-                           for crm_val, piv_val in zip(agg_crm_vals, agg_pivot_vals)]
-
+            sorted_ids = sorted(crm_groups.keys(), key=lambda x: (int(re.search(r'\d+', x).group()), x))
             axis_x = QCategoryAxis()
-            for i, label in enumerate(labels):
-                axis_x.append(label, i + 0.5)
+            for i, crm_id in enumerate(sorted_ids):
+                axis_x.append(f"Verification {crm_id}", i + 0.5)
             axis_x.setLabelsAngle(45)
-            axis_x.setTitleText("CRM ID")
+            axis_x.setTitleText("Verification ID")
             self.chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
 
             axis_y = QValueAxis()
             axis_y.setTitleText(f"{self.selected_element} Value")
+            if y_values:
+                y_min = min(y_values)
+                y_max = max(y_values)
+                margin = (y_max - y_min) * 0.1
+                axis_y.setRange(y_min - margin, y_max + margin)
             self.chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
 
             axis_x_diff = QCategoryAxis()
-            for i, label in enumerate(labels):
-                axis_x_diff.append(label, i + 0.5)
+            for i, crm_id in enumerate(sorted_ids):
+                axis_x_diff.append(f"Verification {crm_id}", i + 0.5)
             axis_x_diff.setLabelsAngle(45)
-            axis_x_diff.setTitleText("CRM ID")
+            axis_x_diff.setTitleText("Verification ID")
             self.diff_chart.addAxis(axis_x_diff, Qt.AlignmentFlag.AlignBottom)
 
             axis_y_diff = QValueAxis()
             axis_y_diff.setTitleText("Difference (%)")
             axis_y_diff.setLabelFormat("%.1f")
+            if diff_values:
+                y_min_diff = min(diff_values)
+                y_max_diff = max(diff_values)
+                margin_diff = (y_max_diff - y_min_diff) * 0.1
+                axis_y_diff.setRange(y_min_diff - margin_diff, y_max_diff + margin_diff)
             self.diff_chart.addAxis(axis_y_diff, Qt.AlignmentFlag.AlignLeft)
 
             plotted = False
-            if self.show_check_crm.isChecked() and any(v != 0 for v in agg_crm_vals):
-                series = QLineSeries()
-                series.setName(f"{self.selected_element} (Check CRM)")
-                series.setPen(QPen(QColor("red"), 2, Qt.PenStyle.DashLine))
-                for i, val in enumerate(agg_crm_vals):
-                    series.append(i + 0.5, val)
-                self.chart.addSeries(series)
-                series.attachAxis(axis_x)
-                series.attachAxis(axis_y)
+            if self.show_check_crm.isChecked():
+                scatter_check = QScatterSeries()
+                scatter_check.setName(f"{self.selected_element} (Check Verification)")
+                scatter_check.setMarkerShape(QScatterSeries.MarkerShape.MarkerShapeCircle)
+                scatter_check.setMarkerSize(8)
+                scatter_check.setPen(QPen(QColor("red")))
+                for i, crm_id in enumerate(sorted_ids):
+                    for point in crm_groups[crm_id]:
+                        if point['crm_val'] != 0:
+                            scatter_check.append(i + 0.5, point['crm_val'])
+                if scatter_check.count() > 0:
+                    self.chart.addSeries(scatter_check)
+                    scatter_check.attachAxis(axis_x)
+                    scatter_check.attachAxis(axis_y)
+                    scatter_check.hovered.connect(lambda point: QToolTip.showText(
+                        self.chart_view.mapToGlobal(self.chart_view.mapFromScene(point)),
+                        f"Check Verification: {point.y():.4f}"
+                    ))
+                    plotted = True
+
                 if self.show_range.isChecked():
-                    range_series_lower = QLineSeries()
-                    range_series_lower.setName("Check CRM Range Lower")
-                    range_series_lower.setPen(QPen(QColor("red"), 1, Qt.PenStyle.DotLine))
-                    range_series_upper = QLineSeries()
-                    range_series_upper.setName("Check CRM Range Upper")
-                    range_series_upper.setPen(QPen(QColor("red"), 1, Qt.PenStyle.DotLine))
-                    for i, lower in enumerate(range_lower):
-                        range_series_lower.append(i + 0.5, lower)
-                    for i, upper in enumerate(range_upper):
-                        range_series_upper.append(i + 0.5, upper)
-                    self.chart.addSeries(range_series_lower)
-                    self.chart.addSeries(range_series_upper)
-                    range_series_lower.attachAxis(axis_x)
-                    range_series_lower.attachAxis(axis_y)
-                    range_series_upper.attachAxis(axis_x)
-                    range_series_upper.attachAxis(axis_y)
-                plotted = True
+                    scatter_lower = QScatterSeries()
+                    scatter_lower.setName("Check Verification Range Lower")
+                    scatter_lower.setMarkerShape(QScatterSeries.MarkerShape.MarkerShapeTriangle)
+                    scatter_lower.setMarkerSize(6)
+                    scatter_lower.setPen(QPen(QColor("red")))
+                    scatter_upper = QScatterSeries()
+                    scatter_upper.setName("Check Verification Range Upper")
+                    scatter_upper.setMarkerShape(QScatterSeries.MarkerShape.MarkerShapeTriangle)
+                    scatter_upper.setMarkerSize(6)
+                    scatter_upper.setPen(QPen(QColor("red")))
+                    for i, crm_id in enumerate(sorted_ids):
+                        for point in crm_groups[crm_id]:
+                            range_val = self.parent.calculate_dynamic_range(point['crm_val'])
+                            scatter_lower.append(i + 0.5, point['crm_val'] - range_val)
+                            scatter_upper.append(i + 0.5, point['crm_val'] + range_val)
+                    if scatter_lower.count() > 0:
+                        self.chart.addSeries(scatter_lower)
+                        self.chart.addSeries(scatter_upper)
+                        scatter_lower.attachAxis(axis_x)
+                        scatter_lower.attachAxis(axis_y)
+                        scatter_upper.attachAxis(axis_x)
+                        scatter_upper.attachAxis(axis_y)
+                        scatter_lower.hovered.connect(lambda point: QToolTip.showText(
+                            self.chart_view.mapToGlobal(self.chart_view.mapFromScene(point)),
+                            f"Range Lower: {point.y():.4f}"
+                        ))
+                        scatter_upper.hovered.connect(lambda point: QToolTip.showText(
+                            self.chart_view.mapToGlobal(self.chart_view.mapFromScene(point)),
+                            f"Range Upper: {point.y():.4f}"
+                        ))
+                        plotted = True
 
-            if self.show_pivot_crm.isChecked() and any(v != 0 for v in agg_pivot_vals):
-                series = QLineSeries()
-                series.setName(f"{self.selected_element} (Pivot CRM)")
-                series.setPen(QPen(QColor("blue"), 2))
-                scatter = QScatterSeries()
-                scatter.setName("")
-                scatter.setMarkerShape(QScatterSeries.MarkerShape.MarkerShapeCircle)
-                scatter.setMarkerSize(8)
-                for i, (val, color) in enumerate(zip(agg_pivot_vals, agg_colors)):
-                    series.append(i + 0.5, val)
-                    scatter.append(i + 0.5, val)
-                    scatter.setPen(QPen(color))
-                self.chart.addSeries(series)
-                self.chart.addSeries(scatter)
-                series.attachAxis(axis_x)
-                series.attachAxis(axis_y)
-                scatter.attachAxis(axis_x)
-                scatter.attachAxis(axis_y)
-                plotted = True
+            if self.show_pivot_crm.isChecked():
+                scatter_pivot = QScatterSeries()
+                scatter_pivot.setName(f"{self.selected_element} (Pivot Verification)")
+                scatter_pivot.setMarkerShape(QScatterSeries.MarkerShape.MarkerShapeCircle)
+                scatter_pivot.setMarkerSize(8)
+                for i, crm_id in enumerate(sorted_ids):
+                    for point in crm_groups[crm_id]:
+                        if point['pivot_val'] != 0:
+                            scatter_pivot.append(i + 0.5, point['pivot_val'])
+                            scatter_pivot.setPen(QPen(point['color']))
+                if scatter_pivot.count() > 0:
+                    self.chart.addSeries(scatter_pivot)
+                    scatter_pivot.attachAxis(axis_x)
+                    scatter_pivot.attachAxis(axis_y)
+                    scatter_pivot.hovered.connect(lambda point: QToolTip.showText(
+                        self.chart_view.mapToGlobal(self.chart_view.mapFromScene(point)),
+                        f"Pivot Verification: {point.y():.4f}"
+                    ))
+                    plotted = True
 
-            if self.show_middle.isChecked() and any(v != 0 for v in middle_values):
-                series = QLineSeries()
-                series.setName(f"{self.selected_element} (Middle)")
-                series.setPen(QPen(QColor("green"), 2, Qt.PenStyle.DotLine))
-                for i, val in enumerate(middle_values):
-                    series.append(i + 0.5, val)
-                self.chart.addSeries(series)
-                series.attachAxis(axis_x)
-                series.attachAxis(axis_y)
-                plotted = True
+            if self.show_middle.isChecked():
+                scatter_middle = QScatterSeries()
+                scatter_middle.setName(f"{self.selected_element} (Middle)")
+                scatter_middle.setMarkerShape(QScatterSeries.MarkerShape.MarkerShapeRectangle)
+                scatter_middle.setMarkerSize(6)
+                scatter_middle.setPen(QPen(QColor("green")))
+                for i, crm_id in enumerate(sorted_ids):
+                    for point in crm_groups[crm_id]:
+                        middle_val = (point['crm_val'] + point['pivot_val']) / 2 if point['crm_val'] != 0 and point['pivot_val'] != 0 else point['crm_val'] or point['pivot_val'] or 0
+                        if middle_val != 0:
+                            scatter_middle.append(i + 0.5, middle_val)
+                if scatter_middle.count() > 0:
+                    self.chart.addSeries(scatter_middle)
+                    scatter_middle.attachAxis(axis_x)
+                    scatter_middle.attachAxis(axis_y)
+                    scatter_middle.hovered.connect(lambda point: QToolTip.showText(
+                        self.chart_view.mapToGlobal(self.chart_view.mapFromScene(point)),
+                        f"Middle: {point.y():.4f}"
+                    ))
+                    plotted = True
 
-            if self.show_diff.isChecked() and any(v != 0 for v in diff_values):
-                series = QLineSeries()
-                series.setName("Difference (%)")
-                series.setPen(QPen(QColor("purple"), 2))
-                scatter = QScatterSeries()
-                scatter.setName("")
-                scatter.setMarkerShape(QScatterSeries.MarkerShape.MarkerShapeCircle)
-                scatter.setMarkerSize(8)
-                scatter.setPen(QPen(QColor("purple")))
-                for i, val in enumerate(diff_values):
-                    series.append(i + 0.5, val)
-                    scatter.append(i + 0.5, val)
-                self.diff_chart.addSeries(series)
-                self.diff_chart.addSeries(scatter)
-                series.attachAxis(axis_x_diff)
-                series.attachAxis(axis_y_diff)
-                scatter.attachAxis(axis_x_diff)
-                scatter.attachAxis(axis_y_diff)
-                plotted = True
+            if self.show_diff.isChecked():
+                scatter_diff = QScatterSeries()
+                scatter_diff.setName("Difference (%)")
+                scatter_diff.setMarkerShape(QScatterSeries.MarkerShape.MarkerShapeCircle)
+                scatter_diff.setMarkerSize(8)
+                scatter_diff.setPen(QPen(QColor("purple")))
+                for i, crm_id in enumerate(sorted_ids):
+                    for point in crm_groups[crm_id]:
+                        if point['crm_val'] != 0:
+                            diff = ((point['crm_val'] - point['pivot_val']) / point['crm_val']) * 100
+                            scatter_diff.append(i + 0.5, diff)
+                if scatter_diff.count() > 0:
+                    self.diff_chart.addSeries(scatter_diff)
+                    scatter_diff.attachAxis(axis_x_diff)
+                    scatter_diff.attachAxis(axis_y_diff)
+                    scatter_diff.hovered.connect(lambda point: QToolTip.showText(
+                        self.diff_chart_view.mapToGlobal(self.diff_chart_view.mapFromScene(point)),
+                        f"Difference: {point.y():.1f}%"
+                    ))
+                    plotted = True
 
             if not plotted:
                 self.chart.setTitle(f"No data plotted for {self.selected_element}")
@@ -398,19 +430,20 @@ class PivotPlotDialog(QDialog):
                 QMessageBox.warning(self, "Warning", f"No data could be plotted for {self.selected_element}")
                 return
 
-            self.chart.setTitle(f"CRM Values for {self.selected_element} (Grouped by CRM ID)")
+            self.chart.setTitle(f"Verification Values for {self.selected_element}")
             self.diff_chart.setTitle(f"Difference (%) for {self.selected_element}")
             self.chart_view.update()
             self.diff_chart_view.update()
 
         except Exception as e:
+            self.parent.logger.error(f"Failed to update plot: {str(e)}")
             QMessageBox.warning(self, "Error", f"Failed to update plot: {str(e)}")
 
     def open_select_crms_window(self):
         from PyQt6.QtWidgets import QTreeView
         from PyQt6.QtGui import QStandardItemModel, QStandardItem
         w = QDialog(self)
-        w.setWindowTitle("Select CRMs to Include")
+        w.setWindowTitle("Select Verifications to Include")
         w.setGeometry(200, 200, 300, 400)
         w.setModal(True)
         layout = QVBoxLayout(w)

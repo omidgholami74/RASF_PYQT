@@ -1,7 +1,8 @@
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QPushButton, QTextEdit
+import re
 
 class ReportDialog(QDialog):
-    """Dialog to display report with improved UI."""
+    """Dialog to display a table-based report with CRM analysis data."""
     def __init__(self, parent, annotations):
         super().__init__(parent)
         self.annotations = annotations
@@ -47,44 +48,92 @@ class ReportDialog(QDialog):
             <style>
                 body { font-family: 'Segoe UI', sans-serif; color: #333; line-height: 1.6; }
                 h1 { color: #007bff; text-align: center; margin-bottom: 20px; }
-                .report-section { margin-bottom: 30px; border-bottom: 1px solid #dee2e6; padding-bottom: 10px; }
-                .crm-title { font-weight: bold; color: #28a745; }
-                .problematic { color: #dc3545; font-weight: bold; }
+                table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+                th, td { border: 1px solid #dee2e6; padding: 8px; text-align: left; }
+                th { background-color: #007bff; color: white; }
                 .in-range { color: #28a745; }
                 .out-range { color: #dc3545; }
+                .problematic { color: #dc3545; font-weight: bold; }
             </style>
         </head>
         <body>
             <h1>CRM Analysis Report</h1>
+            <table>
+                <tr>
+                    <th>Verification ID</th>
+                    <th>Check Verification Value</th>
+                    <th>Pivot Verification Value</th>
+                    <th>Original Range</th>
+                    <th>Status</th>
+                    <th>Blank Value Subtracted</th>
+                    <th>Corrected Verification Value</th>
+                    <th>Corrected Range</th>
+                    <th>Status after Blank Subtraction</th>
+                    <th>Required Scaling (%)</th>
+                </tr>
         """
         
         for annotation in self.annotations:
+            # Parse annotation
             lines = annotation.split('\n')
-            crm_header = lines[0].strip()
-            details = lines[1:] if len(lines) > 1 else []
+            if not lines:
+                continue
             
-            html += f'<div class="report-section">'
-            html += f'<span class="crm-title">{crm_header}</span><br>'
+            # Extract Verification ID
+            verification_id_match = re.match(r'Verification ID: (\w+) \(Label: .+\)', lines[0].strip())
+            verification_id = verification_id_match.group(1) if verification_id_match else "Unknown"
             
-            for detail in details:
-                detail = detail.strip()
-                if not detail:
+            # Initialize defaults
+            check_val = pivot_val = orig_range = status = blank_val = corrected_val = corrected_range = corrected_status = scaling = ""
+            
+            for line in lines[1:]:
+                line = line.strip()
+                if not line:
                     continue
-                if "in range" in detail:
-                    html += f'<span class="in-range">{detail}</span><br>'
-                elif "out of range" in detail:
-                    html += f'<span class="out-range">{detail}</span><br>'
-                elif "Scaling needed" in detail:
-                    if "problematic" in detail:
-                        html += f'<span class="problematic">{detail}</span><br>'
-                    else:
-                        html += f'<span>{detail}</span><br>'
-                else:
-                    html += f'{detail}<br>'
+                if "Check Verification Value:" in line:
+                    check_val = line.split(": ")[1].strip()
+                elif "Pivot Verification Value:" in line:
+                    pivot_val = line.split(": ")[1].strip()
+                elif "Original Range:" in line:
+                    orig_range = line.split(": ")[1].strip()
+                elif "Status: In range" in line:
+                    status = '<span class="in-range">In range</span>'
+                elif "Status: Out of range" in line:
+                    status = '<span class="out-range">Out of range</span>'
+                elif "Blank Value Subtracted:" in line:
+                    blank_val = line.split(": ")[1].strip()
+                elif "Corrected Verification Value:" in line:
+                    corrected_val = line.split(": ")[1].strip()
+                elif "Corrected Range:" in line:
+                    corrected_range = line.split(": ")[1].strip()
+                elif "Status after Blank Subtraction: In range" in line:
+                    corrected_status = '<span class="in-range">In range</span>'
+                elif "Status after Blank Subtraction: Out of range" in line:
+                    corrected_status = '<span class="out-range">Out of range</span>'
+                elif "Required Scaling:" in line:
+                    scaling_match = re.search(r'Required Scaling: ([\d.]+)% (increase|decrease)', line)
+                    if scaling_match:
+                        scaling = f"{scaling_match.group(1)}% {scaling_match.group(2)}"
+                        if "Scaling exceeds 200%" in line:
+                            scaling = f'<span class="problematic">{scaling} (Problematic)</span>'
             
-            html += '</div>'
+            html += f"""
+                <tr>
+                    <td>{verification_id}</td>
+                    <td>{check_val}</td>
+                    <td>{pivot_val}</td>
+                    <td>{orig_range}</td>
+                    <td>{status}</td>
+                    <td>{blank_val}</td>
+                    <td>{corrected_val}</td>
+                    <td>{corrected_range}</td>
+                    <td>{corrected_status}</td>
+                    <td>{scaling}</td>
+                </tr>
+            """
         
         html += """
+            </table>
         </body>
         </html>
         """
