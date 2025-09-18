@@ -1,6 +1,6 @@
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QPushButton, QTextEdit, QComboBox, QLabel, QHBoxLayout
-from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QPushButton, QTextEdit
 from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtCore import Qt
 import re
 
 class ReportDialog(QDialog):
@@ -61,6 +61,8 @@ class ReportDialog(QDialog):
                 table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
                 th, td { border: 1px solid #dee2e6; padding: 8px; text-align: left; }
                 th { background-color: #007bff; color: white; }
+                td.in-range { color: #28a745; font-weight: bold; }
+                td.out-range { color: #dc3545; font-weight: bold; }
             </style>
         </head>
         <body>
@@ -78,6 +80,7 @@ class ReportDialog(QDialog):
                     <th>Corrected Range</th>
                     <th>Status after Blank Subtraction</th>
                     <th>Soln Conc</th>
+                    <th>Int</th>
                     <th>Calibration Range</th>
                     <th>Required Scaling (%)</th>
                 </tr>
@@ -91,7 +94,8 @@ class ReportDialog(QDialog):
             verification_id_match = re.match(r'Verification ID: (\w+) \(Label: .+\)', lines[0].strip())
             verification_id = verification_id_match.group(1) if verification_id_match else "Unknown"
             
-            certificate_val = sample_val = acceptable_range = status = blank_val = corrected_sample_val = corrected_range = corrected_status = soln_conc = calibration_range = scaling = ""
+            certificate_val = sample_val = acceptable_range = status = blank_val = corrected_sample_val = corrected_range = corrected_status = soln_conc = int_val = calibration_range = scaling = ""
+            calibration_range_class = soln_conc_class = ""
             
             for line in lines[1:]:
                 line = line.strip()
@@ -118,9 +122,17 @@ class ReportDialog(QDialog):
                 elif "Status after Blank Subtraction: Out of range" in line:
                     corrected_status = '<span class="out-range">Out of range</span>'
                 elif "Soln Conc:" in line:
-                    soln_conc = line.split(": ")[1].strip()
+                    parts = line.split(": ", 1)[1].rsplit(" ", 1)
+                    soln_conc = parts[0].strip()
+                    soln_conc_status = parts[1].strip() if len(parts) > 1 else ""
+                    soln_conc_class = 'in-range' if soln_conc_status == 'in_range' else 'out-range'
+                elif "Int:" in line:
+                    int_val = line.split(": ")[1].strip()
                 elif "Calibration Range:" in line:
-                    calibration_range = line.split(": ")[1].strip()
+                    parts = line.split(": ", 1)[1].rsplit(" ", 1)
+                    calibration_range = parts[0].strip()
+                    range_status = parts[1].strip() if len(parts) > 1 else ""
+                    calibration_range_class = 'in-range' if range_status == 'in_range' else 'out-range'
                 elif "Required Scaling:" in line:
                     scaling_match = re.search(r'Required Scaling: ([\d.]+)% (increase|decrease)', line)
                     if scaling_match:
@@ -128,19 +140,21 @@ class ReportDialog(QDialog):
                         if "Scaling exceeds 200%" in line:
                             scaling = f'<span class="problematic">{scaling} (Problematic)</span>'
             
+            sample_val_class = 'in-range' if 'In range' in status else 'out-range'
             html += f"""
                 <tr>
                     <td>{verification_id}</td>
                     <td>{certificate_val}</td>
-                    <td>{sample_val}</td>
+                    <td class="{sample_val_class}">{sample_val}</td>
                     <td>{acceptable_range}</td>
                     <td>{status}</td>
                     <td>{blank_val}</td>
                     <td>{corrected_sample_val}</td>
                     <td>{corrected_range}</td>
                     <td>{corrected_status}</td>
-                    <td>{soln_conc}</td>
-                    <td>{calibration_range}</td>
+                    <td class="{soln_conc_class}">{soln_conc}</td>
+                    <td>{int_val}</td>
+                    <td class="{calibration_range_class}">{calibration_range}</td>
                     <td>{scaling}</td>
                 </tr>
             """
