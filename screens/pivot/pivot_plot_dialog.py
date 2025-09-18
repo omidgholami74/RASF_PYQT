@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QCheckBox, QLabel, QLineEdit, QPushButton, QMessageBox, QComboBox, QTabWidget
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QCheckBox, QLabel, QLineEdit, QPushButton, QMessageBox, QComboBox
 from PyQt6.QtCore import Qt, QPointF
 from PyQt6.QtGui import QColor
 import pyqtgraph as pg
@@ -42,10 +42,6 @@ class PivotPlotDialog(QDialog):
         self.show_range.toggled.connect(self.update_plot)
         control_frame.addWidget(self.show_range)
         
-        self.show_diff = QCheckBox("Show Difference", checked=True)
-        self.show_diff.toggled.connect(self.update_plot)
-        control_frame.addWidget(self.show_diff)
-        
         # Range percent selection
         control_frame.addWidget(QLabel("Acceptable Range (%):"))
         self.range_combo = QComboBox()
@@ -85,59 +81,45 @@ class PivotPlotDialog(QDialog):
         
         layout.addLayout(control_frame)
         
-        # Tab widget for main plot and difference plot
-        self.tab_widget = QTabWidget()
-        layout.addWidget(self.tab_widget)
-        
-        # Main plot tab
+        # Main plot
         self.main_plot = pg.PlotWidget()
         self.main_plot.setMouseEnabled(x=True, y=True)
         self.main_plot.setMenuEnabled(True)
         self.main_plot.enableAutoRange(x=False, y=False)
         self.main_plot.setBackground('w')
-        self.tab_widget.addTab(self.main_plot, "Verification Values")
-        
-        # Difference plot tab
-        self.diff_plot = pg.PlotWidget()
-        self.diff_plot.setMouseEnabled(x=True, y=True)
-        self.diff_plot.setMenuEnabled(True)
-        self.diff_plot.enableAutoRange(x=False, y=False)
-        self.diff_plot.setBackground('w')
-        self.tab_widget.addTab(self.diff_plot, "Difference (%)")
+        self.legend = self.main_plot.addLegend(offset=(10, 10))  # Initialize legend once
+        layout.addWidget(self.main_plot)
         
         # Connect mouse move for tooltips
         self.main_plot.scene().sigMouseMoved.connect(self.show_tooltip)
-        self.diff_plot.scene().sigMouseMoved.connect(self.show_tooltip)
         
         self.update_plot()
 
     def zoom_in(self):
         self.main_plot.getViewBox().scaleBy((0.8, 0.8))
-        self.diff_plot.getViewBox().scaleBy((0.8, 0.8))
 
     def zoom_out(self):
         self.main_plot.getViewBox().scaleBy((1.25, 1.25))
-        self.diff_plot.getViewBox().scaleBy((1.25, 1.25))
 
     def reset_zoom(self):
         if self.initial_ranges:
             self.main_plot.setXRange(self.initial_ranges['main_x'][0], self.initial_ranges['main_x'][1])
             self.main_plot.setYRange(self.initial_ranges['main_y'][0], self.initial_ranges['main_y'][1])
-            self.diff_plot.setXRange(self.initial_ranges['diff_x'][0], self.initial_ranges['diff_x'][1])
-            self.diff_plot.setYRange(self.initial_ranges['diff_y'][0], self.initial_ranges['diff_y'][1])
 
     def show_tooltip(self, pos):
-        plot = self.sender().getPlotItem()
+        plot = self.main_plot.getPlotItem()
         if not plot:
             return
         vb = plot.getViewBox()
         mouse_point = vb.mapSceneToView(pos)
+        # Remove existing tooltip text items
+        for item in plot.items[:]:
+            if isinstance(item, pg.TextItem):
+                plot.removeItem(item)
         for item in plot.listDataItems():
             x, y = item.getData()
             for i in range(len(x)):
-                if abs(vb.mapViewToScene(pg.Point(x[i], y[i])).x() - pos.x()) < 10 and abs(vb.mapViewToScene(pg.Point(x[i], y[i])).y() - pos.y()) < 10:
-                    plot.clear()
-                    self.update_plot()  # Redraw to clear previous tooltip
+                if abs(vb.mapViewToScene(pg.Point(x[i], y[i])).x() - pos.x()) < 15 and abs(vb.mapViewToScene(pg.Point(x[i], y[i])).y() - pos.y()) < 15:
                     text = pg.TextItem(f"{item.name()}: {self.format_number(y[i])}", anchor=(0, 0))
                     text.setPos(x[i], y[i])
                     plot.addItem(text)
@@ -171,13 +153,13 @@ class PivotPlotDialog(QDialog):
 
     def update_plot(self):
         if not self.selected_element or self.selected_element not in self.parent.pivot_data.columns:
-            self.logger.warning(f"Element '{self.selected_element}' not found in pivot data!")
-            QMessageBox.warning(self, "Warning", f"Element '{self.selected_element}' not found in pivot data!")
+            self.logger.warning(f"Element '{self.selected_element}' not found in pivot data! Available columns: {list(self.parent.pivot_data.columns)}")
+            QMessageBox.warning(self, "Warning", f"Element '{self.selected_element}' not found in pivot data! Available elements: {', '.join(self.parent.pivot_data.columns)}")
             return
 
         try:
             self.main_plot.clear()
-            self.diff_plot.clear()
+            self.legend.clear()  # Clear existing legend items
             self.annotations.clear()
 
             def extract_crm_id(label):
@@ -221,6 +203,7 @@ class PivotPlotDialog(QDialog):
                 and label not in blank_rows['Solution Label'].values
                 and label in self.parent.included_crms and self.parent.included_crms[label].isChecked()
             ]
+            self.logger.debug(f"CRM labels: {crm_labels}")
 
             # Prepare data for plotting
             crm_ids = []
@@ -232,15 +215,16 @@ class PivotPlotDialog(QDialog):
             upper_bounds = []
             middle_values = []
             soln_concs = []
-            diffs = []
 
             for sol_label in crm_labels:
                 pivot_row = self.parent.pivot_data[self.parent.pivot_data['Solution Label'] == sol_label]
                 if pivot_row.empty:
+                    self.logger.warning(f"No pivot data for Solution Label: {sol_label}")
                     continue
                 pivot_val = pivot_row.iloc[0][self.selected_element]
                 crm_id = extract_crm_id(sol_label)
                 if not crm_id:
+                    self.logger.warning(f"No CRM ID extracted for Solution Label: {sol_label}")
                     continue
                 
                 # Get Soln Conc for this sample
@@ -255,6 +239,7 @@ class PivotPlotDialog(QDialog):
                     if isinstance(row_data, list) and row_data and row_data[0].endswith("CRM"):
                         val = row_data[self.parent.pivot_data.columns.get_loc(self.selected_element)] if self.selected_element in self.parent.pivot_data.columns else ""
                         if not val or not val.strip():
+                            self.logger.warning(f"Empty or invalid CRM value for {sol_label}")
                             continue
                         
                         # Handle non-numeric values
@@ -271,6 +256,7 @@ class PivotPlotDialog(QDialog):
                             annotation += f"\n  - Soln Conc: {soln_conc}"
                             annotation += f"\n  - Calibration Range: {calibration_range}"
                             self.annotations.append(annotation)
+                            self.logger.debug(f"Non-numeric data detected for {sol_label}: Certificate={val}, Sample={pivot_val}")
                             continue
 
                         try:
@@ -341,18 +327,15 @@ class PivotPlotDialog(QDialog):
                             upper_bounds.append(upper)
                             middle_values.append((crm_val + pivot_val_float) / 2)
                             soln_concs.append(soln_conc)
-                            if crm_val != 0:
-                                diffs.append(((crm_val - corrected_pivot) / crm_val) * 100)
-                            else:
-                                diffs.append(0)
                         except ValueError as e:
                             self.logger.error(f"ValueError in processing data for {sol_label}: {str(e)}")
                             continue
 
             if not crm_ids:
                 self.main_plot.clear()
-                self.diff_plot.clear()
-                QMessageBox.warning(self, "Warning", f"No valid Verification data for {self.selected_element}")
+                self.legend.clear()
+                self.logger.warning(f"No valid Verification data for {self.selected_element}. CRM labels: {crm_labels}")
+                QMessageBox.warning(self, "Warning", f"No valid Verification data for {self.selected_element}. Please check data for CRM labels: {', '.join(crm_labels) if crm_labels else 'None'}")
                 return
 
             # Set up main plot
@@ -371,49 +354,43 @@ class PivotPlotDialog(QDialog):
 
             # Plot main chart
             if self.show_check_crm.isChecked():
-                scatter = pg.PlotDataItem(x=x_pos, y=certificate_values, pen=None, symbol='o', symbolSize=8, symbolPen='r', name='Certificate Value')
+                scatter = pg.PlotDataItem(x=x_pos, y=certificate_values, pen=None, symbol='o', symbolSize=8, symbolPen='r', symbolBrush='r', name='Certificate Value')
                 self.main_plot.addItem(scatter)
+                self.legend.addItem(scatter, 'Certificate Value')
 
             if self.show_pivot_crm.isChecked():
+                sample_scatter = None
                 for i in range(len(crm_ids)):
                     color = 'g' if lower_bounds[i] <= sample_values[i] <= upper_bounds[i] else 'r'
-                    scatter = pg.PlotDataItem(x=[x_pos[i]], y=[sample_values[i]], pen=None, symbol='o', symbolSize=8, symbolPen=color, name='Sample Value')
+                    scatter = pg.PlotDataItem(x=[x_pos[i]], y=[sample_values[i]], pen=None, symbol='o', symbolSize=8, symbolPen=color, symbolBrush=color)
                     self.main_plot.addItem(scatter)
+                    if i == 0:  # Add only one representative item to legend
+                        sample_scatter = pg.PlotDataItem(x=[x_pos[i]], y=[sample_values[i]], pen=None, symbol='o', symbolSize=8, symbolPen='g', symbolBrush='g', name='Sample Value')
+                        self.main_plot.addItem(sample_scatter)
+                        self.legend.addItem(sample_scatter, 'Sample Value')
 
             if self.show_middle.isChecked():
-                scatter = pg.PlotDataItem(x=x_pos, y=middle_values, pen=None, symbol='s', symbolSize=6, symbolPen='g', name='Middle')
+                scatter = pg.PlotDataItem(x=x_pos, y=middle_values, pen=None, symbol='s', symbolSize=6, symbolPen='g', symbolBrush='g', name='Middle')
                 self.main_plot.addItem(scatter)
+                self.legend.addItem(scatter, 'Middle')
 
             if self.show_range.isChecked():
+                range_item = None
                 for i in range(len(crm_ids)):
                     line_lower = pg.PlotDataItem(x=[x_pos[i] - 0.2, x_pos[i] + 0.2], y=[lower_bounds[i], lower_bounds[i]], pen=pg.mkPen('c', width=2))
                     line_upper = pg.PlotDataItem(x=[x_pos[i] - 0.2, x_pos[i] + 0.2], y=[upper_bounds[i], upper_bounds[i]], pen=pg.mkPen('c', width=2))
                     self.main_plot.addItem(line_lower)
                     self.main_plot.addItem(line_upper)
+                    if i == 0:  # Add only one representative item to legend
+                        range_item = pg.PlotDataItem(x=[x_pos[i] - 0.2, x_pos[i] + 0.2], y=[lower_bounds[i], lower_bounds[i]], pen=pg.mkPen('c', width=2), name='Acceptable Range')
+                        self.main_plot.addItem(range_item)
+                        self.legend.addItem(range_item, 'Acceptable Range')
 
             self.main_plot.showGrid(x=True, y=True, alpha=0.3)
 
-            # Set up difference plot
-            self.diff_plot.setLabel('bottom', 'Verification ID')
-            self.diff_plot.setLabel('left', 'Difference (%)')
-            self.diff_plot.setTitle(f'Difference (%) for {self.selected_element}')
-            self.diff_plot.getAxis('bottom').setTicks([[(i - 0.5, f'V {id}') for i, id in enumerate(crm_ids)]])
-            if diffs:
-                y_min, y_max = min(diffs), max(diffs)
-                margin = (y_max - y_min) * 0.1
-                self.diff_plot.setXRange(-0.5, len(crm_ids) - 0.5)
-                self.diff_plot.setYRange(y_min - margin, y_max + margin)
-                self.initial_ranges['diff_x'] = (-0.5, len(crm_ids) - 0.5)
-                self.initial_ranges['diff_y'] = (y_min - margin, y_max + margin)
-
-            if self.show_diff.isChecked():
-                scatter = pg.PlotDataItem(x=x_pos, y=diffs, pen=None, symbol='o', symbolSize=8, symbolPen='m', name='Difference (%)')
-                self.diff_plot.addItem(scatter)
-                self.diff_plot.addLine(y=0, pen=pg.mkPen('k', style=Qt.PenStyle.DashLine))
-
-            self.diff_plot.showGrid(x=True, y=True, alpha=0.3)
-
         except Exception as e:
+            self.main_plot.clear()
+            self.legend.clear()
             self.logger.error(f"Failed to update plot: {str(e)}", exc_info=True)
             QMessageBox.warning(self, "Error", f"Failed to update plot: {str(e)}")
 
