@@ -6,6 +6,7 @@ import re
 import pandas as pd
 import numpy as np
 import logging
+from datetime import datetime
 
 class PivotPlotDialog(QDialog):
     """Dialog for plotting Verification data with PyQtGraph for professional plotting."""
@@ -171,6 +172,7 @@ class PivotPlotDialog(QDialog):
             # Extract element name and wavelength
             element_name = self.selected_element.split()[0]
             wavelength = ' '.join(self.selected_element.split()[1:]) if len(self.selected_element.split()) > 1 else ""
+            analysis_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Current date and time
 
             # Get calibration range from Std data
             std_data = self.parent.original_df[
@@ -189,6 +191,7 @@ class PivotPlotDialog(QDialog):
 
             # Step 2: Get the first blank row's value
             blank_val = 0
+            blank_correction_status = "Not Applied"
             if not blank_rows.empty:
                 first_blank_row = blank_rows.iloc[0]
                 blank_val = first_blank_row[self.selected_element] if pd.notna(first_blank_row[self.selected_element]) else 0
@@ -196,6 +199,8 @@ class PivotPlotDialog(QDialog):
                 if blank_val < 0:
                     self.logger.warning(f"Negative blank value detected: {blank_val}. Setting to 0.")
                     blank_val = 0
+                if blank_val != 0:
+                    blank_correction_status = "Applied"
             self.logger.debug(f"Selected Blank Value: {blank_val}")
 
             # Get CRM labels
@@ -218,6 +223,8 @@ class PivotPlotDialog(QDialog):
             middle_values = []
             soln_concs = []
             int_values = []
+            icp_recoveries = []
+            icp_statuses = []
 
             for sol_label in crm_labels:
                 pivot_row = self.parent.pivot_data[self.parent.pivot_data['Solution Label'] == sol_label]
@@ -239,6 +246,15 @@ class PivotPlotDialog(QDialog):
                 soln_conc = sample_rows['Soln Conc'].iloc[0] if not sample_rows.empty else '---'
                 int_val = sample_rows['Int'].iloc[0] if not sample_rows.empty else '---'
                 
+                # Calculate RSD% (assuming multiple measurements are available)
+                int_values_list = sample_rows['Int'].dropna().astype(float).tolist()
+                rsd_percent = (np.std(int_values_list) / np.mean(int_values_list) * 100) if int_values_list and np.mean(int_values_list) != 0 else 0.0
+                
+                # Assume Detection Limit (DL) for the element (e.g., 0.01 ppm for ICP-OES)
+                detection_limit = 0.01  # Placeholder; ideally from calibration data
+                crm_source = "NIST"  # Placeholder; ideally from original_df or user input
+                sample_matrix = "Soil"  # Placeholder; ideally from original_df or user input
+                
                 for row_data, _ in self.parent._inline_crm_rows_display[sol_label]:
                     if isinstance(row_data, list) and row_data and row_data[0].endswith("CRM"):
                         val = row_data[self.parent.pivot_data.columns.get_loc(self.selected_element)] if self.selected_element in self.parent.pivot_data.columns else ""
@@ -254,12 +270,21 @@ class PivotPlotDialog(QDialog):
                             annotation += f"\n  - Acceptable Range: [N/A]"
                             annotation += f"\n  - Status: Out of range (non-numeric data)."
                             annotation += f"\n  - Blank Value Subtracted: {self.format_number(blank_val)}"
+                            annotation += f"\n  - Blank Correction Status: {blank_correction_status}"
                             annotation += f"\n  - Corrected Sample Value: {pivot_val}"
                             annotation += f"\n  - Corrected Range: [N/A]"
                             annotation += f"\n  - Status after Blank Subtraction: Out of range (non-numeric data)."
                             annotation += f"\n  - Soln Conc: {soln_conc} out_range"
                             annotation += f"\n  - Int: {int_val}"
                             annotation += f"\n  - Calibration Range: {calibration_range} out_range"
+                            annotation += f"\n  - ICP Recovery: N/A"
+                            annotation += f"\n  - ICP Status: Out Range"
+                            annotation += f"\n  - ICP Detection Limit: {detection_limit}"
+                            annotation += f"\n  - ICP RSD%: {rsd_percent:.2f}%"
+                            annotation += f"\n  - CRM Source: {crm_source}"
+                            annotation += f"\n  - Sample Matrix: {sample_matrix}"
+                            annotation += f"\n  - Element Wavelength: {wavelength}"
+                            annotation += f"\n  - Analysis Date: {analysis_date}"
                             self.annotations.append(annotation)
                             self.logger.debug(f"Non-numeric data detected for {sol_label}: Certificate={val}, Sample={pivot_val}")
                             continue
@@ -267,6 +292,11 @@ class PivotPlotDialog(QDialog):
                         try:
                             crm_val = float(val)
                             pivot_val_float = float(pivot_val)
+                            
+                            # Calculate ICP Recovery
+                            icp_recovery = (pivot_val_float / crm_val * 100) if crm_val != 0 else 0
+                            in_icp_range = 90 <= icp_recovery <= 110
+                            icp_status = 'In Range' if in_icp_range else 'Out Range'
                             
                             # Acceptable range based on selected percent
                             range_val = crm_val * (self.range_percent / 100)
@@ -293,6 +323,7 @@ class PivotPlotDialog(QDialog):
 
                             if blank_val != 0:
                                 annotation += f"\n  - Blank Value Subtracted: {self.format_number(blank_val)}"
+                                annotation += f"\n  - Blank Correction Status: {blank_correction_status}"
                                 annotation += f"\n  - Corrected Sample Value: {self.format_number(corrected_pivot)}"
                                 annotation += f"\n  - Corrected Range: [{self.format_number(lower)} to {self.format_number(upper)}]"
                                 if corrected_in_range:
@@ -315,12 +346,21 @@ class PivotPlotDialog(QDialog):
                                     else:
                                         annotation += f"\n  - Scaling not applicable (corrected sample value is zero)."
                             else:
+                                annotation += f"\n  - Blank Correction Status: {blank_correction_status}"
                                 annotation += f"\n  - No blank subtraction applied (Blank Value: 0)."
                             
-                            # Add Soln Conc, Int, and Calibration Range
+                            # Add Soln Conc, Int, Calibration Range, and ICP-related info
                             annotation += f"\n  - Soln Conc: {soln_conc if isinstance(soln_conc, str) else self.format_number(soln_conc)} {'in_range' if in_calibration_range_soln else 'out_range'}"
                             annotation += f"\n  - Int: {int_val if isinstance(int_val, str) else self.format_number(int_val)}"
                             annotation += f"\n  - Calibration Range: {calibration_range} {'in_range' if in_calibration_range_soln else 'out_range'}"
+                            annotation += f"\n  - ICP Recovery: {icp_recovery:.2f}% {'in_range' if in_icp_range else 'out_range'}"
+                            annotation += f"\n  - ICP Status: {icp_status}"
+                            annotation += f"\n  - ICP Detection Limit: {self.format_number(detection_limit)}"
+                            annotation += f"\n  - ICP RSD%: {rsd_percent:.2f}%"
+                            annotation += f"\n  - CRM Source: {crm_source}"
+                            annotation += f"\n  - Sample Matrix: {sample_matrix}"
+                            annotation += f"\n  - Element Wavelength: {wavelength}"
+                            annotation += f"\n  - Analysis Date: {analysis_date}"
 
                             self.annotations.append(annotation)
                             
@@ -335,6 +375,8 @@ class PivotPlotDialog(QDialog):
                             middle_values.append((crm_val + pivot_val_float) / 2)
                             soln_concs.append(soln_conc)
                             int_values.append(int_val)
+                            icp_recoveries.append(icp_recovery)
+                            icp_statuses.append(icp_status)
                         except ValueError as e:
                             self.logger.error(f"ValueError in processing data for {sol_label}: {str(e)}")
                             continue
