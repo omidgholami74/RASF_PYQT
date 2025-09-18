@@ -129,16 +129,20 @@ class CRMManager:
 
                 # Map CRM values to pivot_data columns
                 crm_values = {'Solution Label': selected_crm_id}
-                for col in self.pivot_tab.element_order:
-                    if col == 'Solution Label' or col not in self.pivot_tab.pivot_data.columns:
+                for col in self.pivot_tab.pivot_data.columns:
+                    if col == 'Solution Label':
                         continue
-                    element_symbol = col.split()[0].split('_')[0]
-                    print(f"Column: {col}, Extracted Symbol: {element_symbol}, CRM Dict Keys: {list(crm_dict.keys())}")
-                    if element_symbol in crm_dict:
-                        if element_symbol in oxide_factors and self.pivot_tab.use_oxide_var.isChecked():
-                            _, factor = oxide_factors[element_symbol]
-                            crm_values[col] = crm_dict[element_symbol] * factor
-                        else:
+                    # اگر اکسید فعال است، از فرمول اکسید استفاده می‌کنیم
+                    if self.pivot_tab.use_oxide_var.isChecked():
+                        for el, (oxide_formula, factor) in oxide_factors.items():
+                            if col == oxide_formula:
+                                element_symbol = el
+                                if element_symbol in crm_dict:
+                                    crm_values[col] = crm_dict[element_symbol] * factor
+                                break
+                    else:
+                        element_symbol = col.split()[0].split('_')[0]
+                        if element_symbol in crm_dict:
                             crm_values[col] = crm_dict[element_symbol]
                 print(f"CRM Values: {crm_values}")
 
@@ -220,7 +224,12 @@ class CRMManager:
                             crm_row_list.append("")
                         else:
                             try:
-                                element_symbol = col.split()[0].split('_')[0]
+                                element_symbol = col
+                                if self.pivot_tab.use_oxide_var.isChecked():
+                                    for el, (oxide_formula, _) in oxide_factors.items():
+                                        if col == oxide_formula:
+                                            element_symbol = el
+                                            break
                                 params = element_params.get(element_symbol, {
                                     'Act Vol': 1.0, 'Act Wgt': 1.0, 'Coeff 1': 0.0, 'Coeff 2': 1.0
                                 })
@@ -259,7 +268,12 @@ class CRMManager:
                         crm_val = d.get(col, None)
                         if pivot_val is not None and crm_val is not None:
                             try:
-                                element_symbol = col.split()[0].split('_')[0]
+                                element_symbol = col
+                                if self.pivot_tab.use_oxide_var.isChecked():
+                                    for el, (oxide_formula, _) in oxide_factors.items():
+                                        if col == oxide_formula:
+                                            element_symbol = el
+                                            break
                                 params = element_params.get(element_symbol, {
                                     'Act Vol': 1.0, 'Act Wgt': 1.0, 'Coeff 1': 0.0, 'Coeff 2': 1.0
                                 })
@@ -268,16 +282,9 @@ class CRMManager:
                                 coeff_1 = params['Coeff 1']
                                 coeff_2 = params['Coeff 2']
                                 pivot_val = float(pivot_val)
-                                if element_symbol in oxide_factors and self.pivot_tab.use_oxide_var.isChecked():
-                                    _, pivot_factor = oxide_factors[element_symbol]
-                                    pivot_val *= pivot_factor
+                                crm_val = float(crm_val)
                                 if self.pivot_tab.use_int_var.isChecked() and act_vol != 0 and act_wg != 0:
-                                    crm_val = coeff_2 * (float(crm_val) / (act_vol / act_wg)) + coeff_1
-                                if element_symbol in oxide_factors and self.pivot_tab.use_oxide_var.isChecked():
-                                    _, crm_factor = oxide_factors[element_symbol]
-                                    crm_val = float(crm_val) * crm_factor
-                                else:
-                                    crm_val = float(crm_val)
+                                    crm_val = coeff_2 * (crm_val / (act_vol / act_wg)) + coeff_1
                                 if crm_val != 0:
                                     diff = ((crm_val - pivot_val) / crm_val) * 100
                                     diff_row_list.append(f"{diff:.{dec}f}")

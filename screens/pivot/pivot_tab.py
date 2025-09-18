@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,QMessageBox, QComboBox, QLabel, QFrame, QLineEdit, QCheckBox, QDialog, QHeaderView,QTableView)
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QMessageBox, QComboBox, QLabel, QFrame, QLineEdit, QCheckBox, QDialog, QHeaderView, QTableView)
 from PyQt6.QtGui import QFont
 from PyQt6.QtCore import Qt
 from .freeze_table_widget import FreezeTableWidget
@@ -17,7 +17,7 @@ class PivotTab(QWidget):
     """PivotTab with inline CRM rows, difference coloring, and plot visualization."""
     def __init__(self, app, parent_frame):
         super().__init__(parent_frame)
-        self.logger = logging.getLogger(__name__)  # Initialize logger
+        self.logger = logging.getLogger(__name__)
         self.app = app
         self.parent_frame = parent_frame
         self.pivot_data = None
@@ -143,6 +143,8 @@ class PivotTab(QWidget):
             return
 
         df = self.pivot_data.copy()
+        print("Pivot data in update_pivot_display:", df)  # دیباگ
+
         s = self.search_var.text().strip().lower()
         if s:
             mask = df.apply(lambda r: r.astype(str).str.lower().str.contains(s, na=False).any(), axis=1)
@@ -155,17 +157,29 @@ class PivotTab(QWidget):
                     df = df[df[field].isin(selected)]
 
         selected_cols = ['Solution Label']
-        for field, values in self.column_filter_values.items():
-            if field == 'Element':
-                selected_cols.extend([k for k, v in values.items() if v and k in df.columns])
+        if self.use_oxide_var.isChecked():
+            # استفاده از فرمول‌های اکسید برای فیلتر ستون‌ها
+            for field, values in self.column_filter_values.items():
+                if field == 'Element':
+                    selected_cols.extend([
+                        oxide_factors[el][0] for el, v in values.items()
+                        if v and el in oxide_factors and oxide_factors[el][0] in df.columns
+                    ])
+        else:
+            for field, values in self.column_filter_values.items():
+                if field == 'Element':
+                    selected_cols.extend([k for k, v in values.items() if v and k in df.columns])
+
         if len(selected_cols) > 1:
             df = df[selected_cols]
 
         df = df.reset_index(drop=True)
         self.current_view_df = df
-        print('omid1',df)
+        print("Current view data:", df)  # دیباگ
+
         self._inline_crm_rows_display = self.crm_manager._build_crm_row_lists_for_columns(list(df.columns))
-        print("omid2",self.crm_manager._build_crm_row_lists_for_columns(list(df.columns)))
+        print("CRM rows display:", self._inline_crm_rows_display)  # دیباگ
+
         crm_rows = []
         for sol_label in df['Solution Label']:
             if sol_label in self._inline_crm_rows_display:
@@ -174,10 +188,13 @@ class PivotTab(QWidget):
         model = PivotTableModel(self, df, crm_rows)
         self.table_view.setModel(model)
         self.table_view.frozenTableView.setModel(model)
-        model.layoutChanged.emit()
+        self.table_view.model().layoutChanged.emit()
+        self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         for col, width in self.column_widths.items():
-            self.table_view.horizontalHeader().resizeSection(col, width)
+            if col < len(df.columns):
+                self.table_view.horizontalHeader().resizeSection(col, width)
         self.status_label.setText("Data loaded successfully")
+        self.table_view.viewport().update()  # رفرش دستی UI
 
     def calculate_dynamic_range(self, value):
         try:
@@ -216,7 +233,12 @@ class PivotTab(QWidget):
                 current_row += 1 + len(crm_data)
 
             solution_label = self.current_view_df.iloc[row]['Solution Label']
-            element = col_name.split('_')[0]
+            element = col_name
+            if self.use_oxide_var.isChecked():
+                for el, (oxide_formula, _) in oxide_factors.items():
+                    if oxide_formula == col_name:
+                        element = el
+                        break
             cond = (self.original_df['Solution Label'] == solution_label) & (self.original_df['Element'].str.startswith(element))
             cond &= (self.original_df['Type'] == 'Samp')
             match = self.original_df[cond]

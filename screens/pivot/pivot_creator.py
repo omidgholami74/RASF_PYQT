@@ -20,7 +20,6 @@ class PivotCreator:
             self.pivot_tab.original_df = df.copy()
             df_filtered = df[df['Type'].isin(['Samp', 'Sample'])].copy()
             df_filtered['original_index'] = df_filtered.index
-            grp = (df_filtered['Element'] != df_filtered['Element'].shift()).cumsum()
             df_filtered['Element'] = df_filtered['Element'].str.split('_').str[0]
             df_filtered['unique_id'] = df_filtered.groupby(['Solution Label', 'Element']).cumcount()
 
@@ -33,7 +32,12 @@ class PivotCreator:
             self.pivot_tab.solution_label_order = sorted(df_filtered['Solution Label'].drop_duplicates().apply(clean_label).unique().tolist())
             self.pivot_tab.element_order = df_filtered['Element'].drop_duplicates().tolist()
             self.pivot_tab.element_selector.clear()
-            self.pivot_tab.element_selector.addItems([""] + self.pivot_tab.element_order)
+            # اگر گزینه اکسید فعال باشد، فرمول‌های اکسید را در element_selector نمایش می‌دهیم
+            if self.pivot_tab.use_oxide_var.isChecked():
+                oxide_elements = [oxide_factors[el][0] if el in oxide_factors else el for el in self.pivot_tab.element_order]
+                self.pivot_tab.element_selector.addItems([""] + oxide_elements)
+            else:
+                self.pivot_tab.element_selector.addItems([""] + self.pivot_tab.element_order)
 
             value_column = 'Int' if self.pivot_tab.use_int_var.isChecked() else 'Corr Con'
             if value_column not in df_filtered.columns:
@@ -51,13 +55,24 @@ class PivotCreator:
                 on=['Solution Label', 'unique_id'],
                 how='left'
             ).sort_values('original_index').drop(columns=['original_index', 'unique_id']).drop_duplicates()
-            
+
+            print("Before oxide transformation:", pivot_df)  # دیباگ
+
             if self.pivot_tab.use_oxide_var.isChecked():
+                # تغییر نام ستون‌ها به فرمول اکسید و اعمال ضریب
+                rename_dict = {}
                 for col in pivot_df.columns:
-                    if col != 'Solution Label' and col in oxide_factors:
-                        _, factor = oxide_factors[col]
-                        pivot_df[col] = pd.to_numeric(pivot_df[col], errors='coerce') * factor
-            
+                    if col != 'Solution Label':
+                        # استخراج نام عنصر بدون طول موج
+                        element = col.split()[0]
+                        if element in oxide_factors:
+                            oxide_formula, factor = oxide_factors[element]
+                            rename_dict[col] = oxide_formula
+                            pivot_df[col] = pd.to_numeric(pivot_df[col], errors='coerce') * factor
+                pivot_df.rename(columns=rename_dict, inplace=True)
+
+            print("After oxide transformation:", pivot_df)  # دیباگ
+
             self.pivot_tab.pivot_data = pivot_df
             self.pivot_tab.column_widths.clear()
             self.pivot_tab.cached_formatted.clear()

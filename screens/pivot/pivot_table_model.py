@@ -78,9 +78,6 @@ class PivotTableModel(QAbstractTableModel):
                 value = self._df.iloc[pivot_row, col]
                 if col_name != "Solution Label" and pd.notna(value):
                     try:
-                        if self.pivot_tab.use_oxide_var.isChecked() and col_name in oxide_factors:
-                            _, factor = oxide_factors[col_name]
-                            value = float(value) * factor
                         return f"{float(value):.{dec}f}"
                     except (ValueError, TypeError):
                         return "" if pd.isna(value) else str(value)
