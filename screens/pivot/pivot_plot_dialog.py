@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QCheckBox, QLabel, QLineEdit, QPushButton, QMessageBox, QComboBox
 from PyQt6.QtCore import Qt, QPointF
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor,QStandardItem
 import pyqtgraph as pg
 import re
 import pandas as pd
@@ -411,16 +411,17 @@ class PivotPlotDialog(QDialog):
                     added_legend_names.add('Certificate Value')
                     self.logger.debug(f"Added Certificate Value to legend. Current items: {[item[1].name() for item in self.legend.items if hasattr(item[1], 'name')]}")
 
-            if self.show_pivot_crm.isChecked():
+            if self.show_pivot_crm.isChecked() and x_pos and sample_values:
                 for i in range(len(crm_ids)):
                     color = 'g' if lower_bounds[i] <= sample_values[i] <= upper_bounds[i] else 'r'
-                    scatter = pg.PlotDataItem(x=[x_pos[i]], y=[sample_values[i]], pen=None, symbol='o', symbolSize=8, symbolPen=color, symbolBrush=color, name='Sample Value')
+                    scatter = pg.PlotDataItem(x=[x_pos[i]], y=[sample_values[i]], pen=None, symbol='o', symbolSize=8, symbolPen=color, symbolBrush=color)
                     self.main_plot.addItem(scatter)
-                    if i == 0 and 'Sample Value' not in added_legend_names:
-                        sample_scatter = pg.PlotDataItem(x=[x_pos[i]], y=[sample_values[i]], pen=None, symbol='o', symbolSize=8, symbolPen='g', symbolBrush='g', name='Sample Value')
-                        self.legend.addItem(sample_scatter, 'Sample Value')
-                        added_legend_names.add('Sample Value')
-                        self.logger.debug(f"Added Sample Value to legend. Current items: {[item[1].name() for item in self.legend.items if hasattr(item[1], 'name')]}")
+                # Add a single legend item for Sample Value
+                if 'Sample Value' not in added_legend_names:
+                    sample_scatter = pg.PlotDataItem(x=[x_pos[0]], y=[sample_values[0]], pen=None, symbol='o', symbolSize=8, symbolPen='g', symbolBrush='g', name='Sample Value')
+                    self.legend.addItem(sample_scatter, 'Sample Value')
+                    added_legend_names.add('Sample Value')
+                    self.logger.debug(f"Added Sample Value to legend. Current items: {[item[1].name() for item in self.legend.items if hasattr(item[1], 'name')]}")
 
             if self.show_middle.isChecked():
                 scatter = pg.PlotDataItem(x=x_pos, y=middle_values, pen=None, symbol='s', symbolSize=6, symbolPen='g', symbolBrush='g', name='Middle')
@@ -437,11 +438,12 @@ class PivotPlotDialog(QDialog):
                     line_upper = pg.PlotDataItem(x=[x_pos[i] - 0.2, x_pos[i] + 0.2], y=[upper_bounds[i], upper_bounds[i]], pen=pg.mkPen(color, width=2))
                     self.main_plot.addItem(line_lower)
                     self.main_plot.addItem(line_upper)
-                    if i == 0 and 'Acceptable Range' not in added_legend_names:
-                        range_item = pg.PlotDataItem(x=[x_pos[i] - 0.2, x_pos[i] + 0.2], y=[lower_bounds[i], lower_bounds[i]], pen=pg.mkPen('g', width=2), name='Acceptable Range')
-                        self.legend.addItem(range_item, 'Acceptable Range')
-                        added_legend_names.add('Acceptable Range')
-                        self.logger.debug(f"Added Acceptable Range to legend. Current items: {[item[1].name() for item in self.legend.items if hasattr(item[1], 'name')]}")
+                # Add a single legend item for Acceptable Range
+                if 'Acceptable Range' not in added_legend_names and x_pos and lower_bounds:
+                    range_item = pg.PlotDataItem(x=[x_pos[0] - 0.2, x_pos[0] + 0.2], y=[lower_bounds[0], lower_bounds[0]], pen=pg.mkPen('g', width=2), name='Acceptable Range')
+                    self.legend.addItem(range_item, 'Acceptable Range')
+                    added_legend_names.add('Acceptable Range')
+                    self.logger.debug(f"Added Acceptable Range to legend. Current items: {[item[1].name() for item in self.legend.items if hasattr(item[1], 'name')]}")
 
             self.main_plot.showGrid(x=True, y=True, alpha=0.3)
 
