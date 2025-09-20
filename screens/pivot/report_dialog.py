@@ -1,20 +1,67 @@
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QPushButton, QTextEdit
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QCheckBox, QScrollArea, QWidget, QLabel
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtCore import Qt
 import re
 
 class ReportDialog(QDialog):
-    """Dialog to display table-based CRM analysis report."""
+    """Dialog to display table-based CRM analysis report with scrollable column visibility toggles."""
     def __init__(self, parent, annotations):
         super().__init__(parent)
         self.annotations = annotations
         self.setWindowTitle("Professional CRM Analysis Report")
         
-        # Set window to full width
-        screen = QGuiApplication.primaryScreen().size()
-        self.setGeometry(0, 200, screen.width(), 700)
+        # Set window to a reasonable width with fixed height
+        self.setGeometry(100, 200, 1200, 700)
+        
+        # Initialize column visibility dictionary (not all checked by default)
+        self.column_visibility = {
+            'Verification ID': True,
+            'Certificate Value': True,
+            'Sample Value': True,
+            'Acceptable Range': True,
+            'Status': True,
+            'Blank Value Subtracted': False,
+            'Blank Correction Status': False,
+            'Corrected Sample Value': False,
+            'Corrected Range': False,
+            'Status after Blank Subtraction': False,
+            'Soln Conc': True,
+            'Int': False,
+            'Calibration Range': True,
+            'ICP Recovery (%)': False,
+            'ICP Status': False,
+            'ICP Detection Limit': False,
+            'ICP RSD%': False,
+            'CRM Source': False,
+            'Sample Matrix': False,
+            'Element Wavelength': False,
+            'Analysis Date': False,
+            'Required Scaling (%)': False
+        }
         
         layout = QVBoxLayout(self)
+        
+        # Add scrollable checkbox area
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setFixedHeight(50)  # Adjust height to fit checkboxes
+        
+        checkbox_widget = QWidget()
+        checkbox_layout = QHBoxLayout(checkbox_widget)
+        checkbox_layout.addWidget(QLabel("Show Columns:"))
+        self.checkboxes = {}
+        for column in self.column_visibility.keys():
+            checkbox = QCheckBox(column)
+            checkbox.setChecked(self.column_visibility[column])
+            checkbox.toggled.connect(self.update_report)
+            self.checkboxes[column] = checkbox
+            checkbox_layout.addWidget(checkbox)
+        checkbox_layout.addStretch()
+        
+        scroll_area.setWidget(checkbox_widget)
+        layout.addWidget(scroll_area)
         
         self.text_edit = QTextEdit()
         self.text_edit.setReadOnly(True)
@@ -47,7 +94,14 @@ class ReportDialog(QDialog):
         
         self.generate_html_report()
 
+    def update_report(self):
+        """Update column visibility and regenerate the report."""
+        for column, checkbox in self.checkboxes.items():
+            self.column_visibility[column] = checkbox.isChecked()
+        self.generate_html_report()
+
     def generate_html_report(self):
+        """Generate HTML report with only visible columns."""
         html = """
         <html>
         <head>
@@ -70,31 +124,14 @@ class ReportDialog(QDialog):
             <h2>Table Report</h2>
             <table>
                 <tr>
-                    <th>Verification ID</th>
-                    <th>Certificate Value</th>
-                    <th>Sample Value</th>
-                    <th>Acceptable Range</th>
-                    <th>Status</th>
-                    <th>Blank Value Subtracted</th>
-                    <th>Blank Correction Status</th>
-                    <th>Corrected Sample Value</th>
-                    <th>Corrected Range</th>
-                    <th>Status after Blank Subtraction</th>
-                    <th>Soln Conc</th>
-                    <th>Int</th>
-                    <th>Calibration Range</th>
-                    <th>ICP Recovery (%)</th>
-                    <th>ICP Status</th>
-                    <th>ICP Detection Limit</th>
-                    <th>ICP RSD%</th>
-                    <th>CRM Source</th>
-                    <th>Sample Matrix</th>
-                    <th>Element Wavelength</th>
-                    <th>Analysis Date</th>
-                    <th>Required Scaling (%)</th>
-                </tr>
         """
         
+        # Add table headers for visible columns only
+        for column in self.column_visibility:
+            if self.column_visibility[column]:
+                html += f"<th>{column}</th>"
+        html += "</tr>"
+
         for annotation in self.annotations:
             lines = annotation.split('\n')
             if not lines:
@@ -103,9 +140,11 @@ class ReportDialog(QDialog):
             verification_id_match = re.match(r'Verification ID: (\w+) \(Label: .+\)', lines[0].strip())
             verification_id = verification_id_match.group(1) if verification_id_match else "Unknown"
             
+            # Initialize variables for all possible columns
             certificate_val = sample_val = acceptable_range = status = blank_val = blank_correction_status = corrected_sample_val = corrected_range = corrected_status = soln_conc = int_val = calibration_range = icp_recovery = icp_status = detection_limit = rsd_percent = crm_source = sample_matrix = wavelength = analysis_date = scaling = ""
             calibration_range_class = soln_conc_class = icp_status_class = ""
             
+            # Parse annotation lines
             for line in lines[1:]:
                 line = line.strip()
                 if not line:
@@ -169,33 +208,38 @@ class ReportDialog(QDialog):
                         if "Scaling exceeds 200%" in line:
                             scaling = f'<span class="problematic">{scaling} (Problematic)</span>'
             
-            sample_val_class = 'in-range' if 'In range' in status else 'out-range'
-            html += f"""
-                <tr>
-                    <td>{verification_id}</td>
-                    <td>{certificate_val}</td>
-                    <td class="{sample_val_class}">{sample_val}</td>
-                    <td>{acceptable_range}</td>
-                    <td>{status}</td>
-                    <td>{blank_val}</td>
-                    <td>{blank_correction_status}</td>
-                    <td>{corrected_sample_val}</td>
-                    <td>{corrected_range}</td>
-                    <td>{corrected_status}</td>
-                    <td class="{soln_conc_class}">{soln_conc}</td>
-                    <td>{int_val}</td>
-                    <td class="{calibration_range_class}">{calibration_range}</td>
-                    <td>{icp_recovery}</td>
-                    <td class="{icp_status_class}">{icp_status}</td>
-                    <td>{detection_limit}</td>
-                    <td>{rsd_percent}</td>
-                    <td>{crm_source}</td>
-                    <td>{sample_matrix}</td>
-                    <td>{wavelength}</td>
-                    <td>{analysis_date}</td>
-                    <td>{scaling}</td>
-                </tr>
-            """
+            # Map column names to their values and classes
+            column_data = {
+                'Verification ID': (verification_id, ''),
+                'Certificate Value': (certificate_val, ''),
+                'Sample Value': (sample_val, 'in-range' if 'In range' in status else 'out-range'),
+                'Acceptable Range': (acceptable_range, ''),
+                'Status': (status, ''),
+                'Blank Value Subtracted': (blank_val, ''),
+                'Blank Correction Status': (blank_correction_status, ''),
+                'Corrected Sample Value': (corrected_sample_val, ''),
+                'Corrected Range': (corrected_range, ''),
+                'Status after Blank Subtraction': (corrected_status, ''),
+                'Soln Conc': (soln_conc, soln_conc_class),
+                'Int': (int_val, ''),
+                'Calibration Range': (calibration_range, calibration_range_class),
+                'ICP Recovery (%)': (icp_recovery, ''),
+                'ICP Status': (icp_status, icp_status_class),
+                'ICP Detection Limit': (detection_limit, ''),
+                'ICP RSD%': (rsd_percent, ''),
+                'CRM Source': (crm_source, ''),
+                'Sample Matrix': (sample_matrix, ''),
+                'Element Wavelength': (wavelength, ''),
+                'Analysis Date': (analysis_date, ''),
+                'Required Scaling (%)': (scaling, '')
+            }
+            
+            # Generate table row with only visible columns
+            html += "<tr>"
+            for column, (value, css_class) in column_data.items():
+                if self.column_visibility[column]:
+                    html += f'<td class="{css_class}">{value}</td>'
+            html += "</tr>"
         
         html += """
             </table>
