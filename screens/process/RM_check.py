@@ -1,8 +1,7 @@
 from PyQt6.QtWidgets import (QWidget, QFrame, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QLabel, QTableView, QHeaderView, QMessageBox, QMainWindow)
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QStandardItemModel, QStandardItem
-from PyQt6.QtCharts import QChart, QChartView, QLineSeries, QScatterSeries, QValueAxis
-from PyQt6.QtGui import QPainter
+import pyqtgraph as pg
 import pandas as pd
 import numpy as np
 import json
@@ -10,6 +9,9 @@ import os
 import time
 import logging
 import uuid
+
+# Enable antialiasing globally for pyqtgraph
+pg.setConfigOptions(antialias=True)
 
 # Setup logging
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -30,14 +32,10 @@ class PlotWindow(QMainWindow):
     def setup_plot(self):
         """Setup the scatter plot in the window."""
         logger.debug(f"Setting up scatter plot for {self.y_column} vs {self.x_column}")
-        chart = QChart()
-        chart.setTitle(f"Scatter Plot of {self.y_column} vs {self.x_column}")
-
-        series = QScatterSeries()
-        series.setName(self.y_column)
-        series.setMarkerSize(8)
 
         valid_data = 0
+        x_values = []
+        y_values = []
         for _, row in self.df.iterrows():
             x_value = row[self.x_column]
             y_value = row[self.y_column]
@@ -45,7 +43,8 @@ class PlotWindow(QMainWindow):
                 try:
                     x_float = float(x_value)
                     y_float = float(y_value)
-                    series.append(x_float, y_float)
+                    x_values.append(x_float)
+                    y_values.append(y_float)
                     valid_data += 1
                 except (ValueError, TypeError) as e:
                     logger.debug(f"Skipping invalid data point ({x_value}, {y_value}) for {self.y_column}: {e}")
@@ -53,34 +52,29 @@ class PlotWindow(QMainWindow):
 
         if valid_data == 0:
             logger.warning(f"No valid data to plot for {self.y_column}")
-            chart.setTitle(f"No valid data for {self.y_column}")
             self.setCentralWidget(QLabel("No valid data to plot"))
             return
 
-        chart.addSeries(series)
+        # Use pyqtgraph
+        layout_widget = pg.GraphicsLayoutWidget()
+        layout_widget.setBackground('w')  # Set background to white
+        title_item = pg.LabelItem(f"Scatter Plot of {self.y_column} vs {self.x_column}", size='12pt', bold=True)
+        layout_widget.addItem(title_item, row=0, col=0)
+        plot = layout_widget.addPlot(row=1, col=0)
+        plot.plot(x_values, y_values, pen=None, symbol='o', symbolSize=8, symbolBrush='b', name=f"{self.y_column} Data")  # Added name for legend
+        plot.setLabel('bottom', self.x_column)
+        plot.setLabel('left', self.y_column)
 
-        axis_x = QValueAxis()
-        axis_x.setTitleText("Index")
-        axis_x.setLabelFormat("%.0f")
         x_values = pd.to_numeric(self.df[self.x_column], errors='coerce').dropna()
         if not x_values.empty:
-            axis_x.setRange(x_values.min(), x_values.max())
+            plot.setXRange(x_values.min(), x_values.max())
 
-        axis_y = QValueAxis()
-        axis_y.setTitleText(self.y_column)
-        axis_y.setLabelFormat("%.3f")
         y_values = pd.to_numeric(self.df[self.y_column], errors='coerce').dropna()
         if not y_values.empty:
-            axis_y.setRange(y_values.min(), y_values.max())
+            plot.setYRange(y_values.min(), y_values.max())
 
-        chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
-        chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
-        series.attachAxis(axis_x)
-        series.attachAxis(axis_y)
-
-        chart_view = QChartView(chart)
-        chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.setCentralWidget(chart_view)
+        legend = plot.addLegend(offset=(10, 10))  # Explicitly set offset to ensure visibility
+        self.setCentralWidget(layout_widget)
         logger.debug(f"Scatter plot setup completed for {self.y_column}")
 
 class CheckRMFrame(QWidget):
@@ -1156,61 +1150,29 @@ class CheckRMFrame(QWidget):
 
             trendline_after = np.polyval(coefficients_after, valid_sample_index)
 
-            chart = QChart()
-            chart.setTitle(f"Trend for {element} ({self.current_label})")
+            # Use pyqtgraph
+            layout_widget = pg.GraphicsLayoutWidget()
+            layout_widget.setBackground('w')  # Set background to white
+            title_item = pg.LabelItem(f"Trend for {element} ({self.current_label})", size='12pt', bold=True)
+            layout_widget.addItem(title_item, row=0, col=0)
+            plot = layout_widget.addPlot(row=1, col=0)
 
-            before_series = QLineSeries()
-            before_series.setName(f"{element}")
-            for i, val in enumerate(valid_values_original_no_outliers):
-                before_series.append(valid_sample_index_no_outliers[i], val)
+            # Plot data with descriptive legend names and different styles for lines with same color group
+            plot.plot(valid_sample_index_no_outliers, valid_values_original_no_outliers, name=f"Original {element}", pen=pg.mkPen('b', width=2))
+            plot.plot(valid_sample_index[outlier_mask], valid_values_original[outlier_mask], pen=None, symbol='o', symbolSize=8, symbolBrush='r', name="Outlier Points")
+            plot.plot(valid_sample_index, trendline_before, name=f"Trend Before (slope={coefficients_before[0]:.3f})", pen=pg.mkPen('b', style=Qt.PenStyle.DashLine))
+            plot.plot(valid_sample_index_no_outliers, valid_values_corrected_no_outliers, name=f"Corrected {element}", pen=pg.mkPen('g', width=2))
+            plot.plot(valid_sample_index, trendline_after, name=f"Trend After (slope={coefficients_after[0]:.3f})", pen=pg.mkPen('g', style=Qt.PenStyle.DashLine))
 
-            outlier_series = QScatterSeries()
-            outlier_series.setName("Outliers")
-            outlier_series.setMarkerSize(8)
-            for i, val in enumerate(valid_values_original[outlier_mask]):
-                outlier_series.append(valid_sample_index[outlier_mask][i], val)
-
-            trendline_before_series = QLineSeries()
-            trendline_before_series.setName(f"Trendline Before (slope={coefficients_before[0]:.3f})")
-            for i, val in enumerate(trendline_before):
-                trendline_before_series.append(valid_sample_index[i], val)
-
-            after_series = QLineSeries()
-            after_series.setName(f"{element} (Corrected)")
-            for i, val in enumerate(valid_values_corrected_no_outliers):
-                after_series.append(valid_sample_index_no_outliers[i], val)
-
-            trendline_after_series = QLineSeries()
-            trendline_after_series.setName(f"Trendline After (slope={coefficients_after[0]:.3f})")
-            for i, val in enumerate(trendline_after):
-                trendline_after_series.append(valid_sample_index[i], val)
-
-            chart.addSeries(before_series)
-            chart.addSeries(outlier_series)
-            chart.addSeries(trendline_before_series)
-            chart.addSeries(after_series)
-            chart.addSeries(trendline_after_series)
-
-            axis_x = QValueAxis()
-            axis_x.setTitleText("Index")
-            axis_x.setLabelFormat("%.0f")
-            axis_x.setRange(valid_sample_index.min(), valid_sample_index.max())
-
-            axis_y = QValueAxis()
-            axis_y.setTitleText(element)
+            plot.setLabel('bottom', "Index")
+            plot.setLabel('left', element)
             y_min = min(np.min(valid_values_original), np.min(valid_values_corrected)) - 0.1 * (max(np.max(valid_values_original), np.max(valid_values_corrected)) - min(np.min(valid_values_original), np.min(valid_values_corrected)))
             y_max = max(np.max(valid_values_original), np.max(valid_values_corrected)) + 0.1 * (max(np.max(valid_values_original), np.max(valid_values_corrected)) - min(np.min(valid_values_original), np.min(valid_values_corrected)))
-            axis_y.setRange(y_min, y_max)
+            plot.setXRange(valid_sample_index.min(), valid_sample_index.max())
+            plot.setYRange(y_min, y_max)
+            plot.addLegend(offset=(10, 10))  # Ensure legend is displayed with explicit offset
 
-            chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
-            chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
-            for series in [before_series, outlier_series, trendline_before_series, after_series, trendline_after_series]:
-                series.attachAxis(axis_x)
-                series.attachAxis(axis_y)
-
-            chart_view = QChartView(chart)
-            chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
-            self.plot_layout.addWidget(chart_view)
+            self.plot_layout.addWidget(layout_widget)
             logger.debug(f"Trend plot rendered for {element} in {self.current_label}")
 
         QTimer.singleShot(0, render_plot)
