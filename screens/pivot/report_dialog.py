@@ -22,7 +22,7 @@ class ReportDialog(QDialog):
             'Status': True,
             'Blank Value Subtracted': False,
             'Blank Correction Status': False,
-            'Corrected Sample Value': False,
+            'Sample Value - Blank': False,
             'Corrected Range': False,
             'Status after Blank Subtraction': False,
             'Soln Conc': True,
@@ -163,7 +163,7 @@ class ReportDialog(QDialog):
                     blank_val = line.split(": ")[1].strip()
                 elif "Blank Correction Status:" in line:
                     blank_correction_status = line.split(": ")[1].strip()
-                elif "Corrected Sample Value:" in line:
+                elif "Sample Value - Blank:" in line:
                     corrected_sample_val = line.split(": ")[1].strip()
                 elif "Corrected Range:" in line:
                     corrected_range = line.split(": ")[1].strip()
@@ -217,7 +217,7 @@ class ReportDialog(QDialog):
                 'Status': (status, ''),
                 'Blank Value Subtracted': (blank_val, ''),
                 'Blank Correction Status': (blank_correction_status, ''),
-                'Corrected Sample Value': (corrected_sample_val, ''),
+                'Sample Value - Blank': (corrected_sample_val, ''),
                 'Corrected Range': (corrected_range, ''),
                 'Status after Blank Subtraction': (corrected_status, ''),
                 'Soln Conc': (soln_conc, soln_conc_class),
