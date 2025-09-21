@@ -251,7 +251,7 @@ class PivotPlotDialog(QDialog):
                 rsd_percent = (np.std(int_values_list) / np.mean(int_values_list) * 100) if int_values_list and np.mean(int_values_list) != 0 else 0.0
                 
                 # Assume Detection Limit (DL) for the element (e.g., 0.01 ppm for ICP-OES)
-                detection_limit = 0.01  # Placeholder; ideally from calibration data
+                detection_limit = 0.2  # Placeholder; ideally from calibration data
                 crm_source = "NIST"  # Placeholder; ideally from original_df or user input
                 sample_matrix = "Soil"  # Placeholder; ideally from original_df or user input
                 
@@ -269,7 +269,7 @@ class PivotPlotDialog(QDialog):
                             annotation += f"\n  - Sample Value: {pivot_val}"
                             annotation += f"\n  - Acceptable Range: [N/A]"
                             annotation += f"\n  - Status: Out of range (non-numeric data)."
-                            annotation += f"\n  - Blank Value Subtracted: {self.format_number(blank_val)}"
+                            annotation += f"\n  - Blank Value: {self.format_number(blank_val)}"
                             annotation += f"\n  - Blank Correction Status: {blank_correction_status}"
                             annotation += f"\n  - Sample Value - Blank: {pivot_val}"
                             annotation += f"\n  - Corrected Range: [N/A]"
@@ -309,18 +309,19 @@ class PivotPlotDialog(QDialog):
                             annotation += f"\n  - Certificate Value: {self.format_number(crm_val)}"
                             annotation += f"\n  - Sample Value: {self.format_number(pivot_val_float)}"
                             annotation += f"\n  - Acceptable Range: [{self.format_number(lower)} to {self.format_number(upper)}]"
+                            corrected_in_range=False
                             if in_range:
                                 annotation += f"\n  - Status: In range (no adjustment needed)."
                                 corrected_pivot = pivot_val_float  # No correction needed
                                 corrected_in_range = True
-                                annotation += f"\n  - Blank Value Subtracted: {self.format_number(blank_val)}"
+                                annotation += f"\n  - Blank Value: {self.format_number(blank_val)}"
                                 annotation += f"\n  - Blank Correction Status: Not Applied (in range)"
                                 annotation += f"\n  - Corrected Sample Value: {self.format_number(corrected_pivot)}"
                                 annotation += f"\n  - Status after Blank Subtraction: In range."
                             else:
                                 annotation += f"\n  - Status: Out of range without adjustment."
                                 corrected_pivot = pivot_val_float - blank_val
-                                annotation += f"\n  - Blank Value Subtracted: {self.format_number(blank_val)}"
+                                annotation += f"\n  - Blank Value: {self.format_number(blank_val)}"
                                 annotation += f"\n  - Blank Correction Status: {blank_correction_status}"
                                 annotation += f"\n  - Sample Value - Blank: {self.format_number(corrected_pivot)}"
                                 annotation += f"\n  - Corrected Range: [{self.format_number(lower)} to {self.format_number(upper)}]"
