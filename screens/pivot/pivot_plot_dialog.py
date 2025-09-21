@@ -196,8 +196,11 @@ class PivotPlotDialog(QDialog):
                 first_blank_row = blank_rows.iloc[0]
                 blank_val = first_blank_row[self.selected_element] if pd.notna(first_blank_row[self.selected_element]) else 0
                 blank_val = float(blank_val) if self.is_numeric(blank_val) else 0
-                if blank_val != 0:
-                    blank_correction_status = "Applied"
+                # if blank_val < 0:
+                #     self.logger.warning(f"Negative blank value detected: {blank_val}. Setting to 0.")
+                #     blank_val = 0
+                # if blank_val != 0:
+                blank_correction_status = "Applied"
             self.logger.debug(f"Selected Blank Value: {blank_val}")
 
             # Get CRM labels
@@ -268,7 +271,8 @@ class PivotPlotDialog(QDialog):
                             annotation += f"\n  - Status: Out of range (non-numeric data)."
                             annotation += f"\n  - Blank Value Subtracted: {self.format_number(blank_val)}"
                             annotation += f"\n  - Blank Correction Status: {blank_correction_status}"
-                            annotation += f"\n  - Corrected Sample Value: {pivot_val}"
+                            annotation += f"\n  - Sample Value - Blank: {pivot_val}"
+                            annotation += f"\n  - Corrected Range: [N/A]"
                             annotation += f"\n  - Status after Blank Subtraction: Out of range (non-numeric data)."
                             annotation += f"\n  - Soln Conc: {soln_conc} out_range"
                             annotation += f"\n  - Int: {int_val}"
@@ -318,8 +322,8 @@ class PivotPlotDialog(QDialog):
                                 corrected_pivot = pivot_val_float - blank_val
                                 annotation += f"\n  - Blank Value Subtracted: {self.format_number(blank_val)}"
                                 annotation += f"\n  - Blank Correction Status: {blank_correction_status}"
-                                annotation += f"\n  - Corrected Sample Value: {self.format_number(corrected_pivot)}"
-                                corrected_in_range = lower <= corrected_pivot <= upper
+                                annotation += f"\n  - Sample Value - Blank: {self.format_number(corrected_pivot)}"
+                                annotation += f"\n  - Corrected Range: [{self.format_number(lower)} to {self.format_number(upper)}]"
                                 if corrected_in_range:
                                     annotation += f"\n  - Status after Blank Subtraction: In range."
                                 else:
