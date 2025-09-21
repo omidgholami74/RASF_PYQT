@@ -159,11 +159,12 @@ class PivotPlotDialog(QDialog):
             return
 
         try:
+            # Clear the plot and legend completely
             self.main_plot.clear()
-            self.legend.clear()  # Clear existing legend items
-            self.logger.debug(f"Legend cleared. Current legend items: {[item[1].name() for item in self.legend.items if hasattr(item[1], 'name')]}")
+            self.legend.clear()  # Ensure legend is fully cleared
+            self.logger.debug("Legend cleared at the start of update_plot")
             self.annotations.clear()
-            added_legend_names = set()  # Track added legend names to avoid duplicates
+            added_legend_names = set()  # Track added legend names to ensure exactly four
 
             def extract_crm_id(label):
                 m = re.search(r'(?i)(?:CRM|par|OREAS)[\s-]*(\d+[a-zA-Z]?)', str(label))
@@ -196,10 +197,6 @@ class PivotPlotDialog(QDialog):
                 first_blank_row = blank_rows.iloc[0]
                 blank_val = first_blank_row[self.selected_element] if pd.notna(first_blank_row[self.selected_element]) else 0
                 blank_val = float(blank_val) if self.is_numeric(blank_val) else 0
-                # if blank_val < 0:
-                #     self.logger.warning(f"Negative blank value detected: {blank_val}. Setting to 0.")
-                #     blank_val = 0
-                # if blank_val != 0:
                 blank_correction_status = "Applied"
             self.logger.debug(f"Selected Blank Value: {blank_val}")
 
@@ -250,10 +247,10 @@ class PivotPlotDialog(QDialog):
                 int_values_list = sample_rows['Int'].dropna().astype(float).tolist()
                 rsd_percent = (np.std(int_values_list) / np.mean(int_values_list) * 100) if int_values_list and np.mean(int_values_list) != 0 else 0.0
                 
-                # Assume Detection Limit (DL) for the element (e.g., 0.01 ppm for ICP-OES)
-                detection_limit = 0.2  # Placeholder; ideally from calibration data
-                crm_source = "NIST"  # Placeholder; ideally from original_df or user input
-                sample_matrix = "Soil"  # Placeholder; ideally from original_df or user input
+                # Assume Detection Limit (DL) for the element
+                detection_limit = 0.2  # Placeholder
+                crm_source = "NIST"  # Placeholder
+                sample_matrix = "Soil"  # Placeholder
                 
                 for row_data, _ in self.parent._inline_crm_rows_display[sol_label]:
                     if isinstance(row_data, list) and row_data and row_data[0].endswith("CRM"):
@@ -261,8 +258,6 @@ class PivotPlotDialog(QDialog):
                         if not val or not val.strip():
                             self.logger.warning(f"Empty or invalid CRM value for {sol_label}")
                             continue
-                        print('omid1',pivot_val)
-                        # Handle non-numeric values
                         if not self.is_numeric(val) or not self.is_numeric(pivot_val):
                             annotation = f"Verification ID: {crm_id} (Label: {sol_label})"
                             annotation += f"\n  - Certificate Value: {val}"
@@ -292,7 +287,6 @@ class PivotPlotDialog(QDialog):
                         try:
                             crm_val = float(val)
                             pivot_val_float = float(pivot_val)
-                            print('omid2',pivot_val)
                             # Calculate ICP Recovery
                             icp_recovery = (pivot_val_float / crm_val * 100) if crm_val != 0 else 0
                             in_icp_range = 90 <= icp_recovery <= 110
@@ -302,17 +296,16 @@ class PivotPlotDialog(QDialog):
                             range_val = crm_val * (self.range_percent / 100)
                             lower = crm_val - range_val
                             upper = crm_val + range_val
-                            print('omid3',lower,pivot_val_float,upper)
                             in_range = lower <= pivot_val_float <= upper
 
                             annotation = f"Verification ID: {crm_id} (Label: {sol_label})"
                             annotation += f"\n  - Certificate Value: {self.format_number(crm_val)}"
                             annotation += f"\n  - Sample Value: {self.format_number(pivot_val_float)}"
                             annotation += f"\n  - Acceptable Range: [{self.format_number(lower)} to {self.format_number(upper)}]"
-                            corrected_in_range=False
+                            corrected_in_range = False
                             if in_range:
                                 annotation += f"\n  - Status: In range (no adjustment needed)."
-                                corrected_pivot = pivot_val_float  # No correction needed
+                                corrected_pivot = pivot_val_float
                                 corrected_in_range = True
                                 annotation += f"\n  - Blank Value: {self.format_number(blank_val)}"
                                 annotation += f"\n  - Blank Correction Status: Not Applied (in range)"
@@ -346,7 +339,6 @@ class PivotPlotDialog(QDialog):
                                     else:
                                         annotation += f"\n  - Scaling not applicable (corrected sample value is zero)."
                             
-                            # Add Soln Conc, Int, Calibration Range, and ICP-related info
                             in_calibration_range_soln = calibration_min <= float(soln_conc) <= calibration_max if self.is_numeric(soln_conc) and (calibration_min != 0 or calibration_max != 0) else False
                             annotation += f"\n  - Soln Conc: {soln_conc if isinstance(soln_conc, str) else self.format_number(soln_conc)} {'in_range' if in_calibration_range_soln else 'out_range'}"
                             annotation += f"\n  - Int: {int_val if isinstance(int_val, str) else self.format_number(int_val)}"
@@ -400,49 +392,80 @@ class PivotPlotDialog(QDialog):
                 self.initial_ranges['main_x'] = (-0.5, len(crm_ids) - 0.5)
                 self.initial_ranges['main_y'] = (y_min - margin, y_max + margin)
 
-            # Plot main chart and add legend items exactly once
+            # Plot main chart and add exactly four legend items
+            # 1. Certificate Value
             if self.show_check_crm.isChecked() and x_pos and certificate_values:
-                scatter = pg.PlotDataItem(x=x_pos, y=certificate_values, pen=None, symbol='o', symbolSize=8, symbolPen='r', symbolBrush='r', name='Certificate Value')
+                scatter = pg.PlotDataItem(
+                    x=x_pos, y=certificate_values, pen=None, symbol='o', symbolSize=8,
+                    symbolPen='r', symbolBrush='r', name='Certificate Value'
+                )
                 self.main_plot.addItem(scatter)
-                self.legend.addItem(scatter, 'Certificate Value')
-                added_legend_names.add('Certificate Value')
-                self.logger.debug(f"Added Certificate Value to legend")
+                if 'Certificate Value' not in added_legend_names:
+                    self.legend.addItem(scatter, 'Certificate Value')
+                    added_legend_names.add('Certificate Value')
+                    self.logger.debug("Added Certificate Value to legend")
 
+            # 2. Sample Value
             if self.show_pivot_crm.isChecked() and x_pos and sample_values:
                 for i in range(len(crm_ids)):
                     color = 'g' if lower_bounds[i] <= sample_values[i] <= upper_bounds[i] else 'r'
-                    scatter = pg.PlotDataItem(x=[x_pos[i]], y=[sample_values[i]], pen=None, symbol='o', symbolSize=8, symbolPen=color, symbolBrush=color, name='Sample Value')
+                    scatter = pg.PlotDataItem(
+                        x=[x_pos[i]], y=[sample_values[i]], pen=None, symbol='o', symbolSize=8,
+                        symbolPen=color, symbolBrush=color
+                    )
                     self.main_plot.addItem(scatter)
                 # Add a single legend item for Sample Value
-                sample_scatter = pg.PlotDataItem(x=[x_pos[0]], y=[sample_values[0]], pen=None, symbol='o', symbolSize=8, symbolPen='g', symbolBrush='g', name='Sample Value')
-                self.legend.addItem(sample_scatter, 'Sample Value')
-                added_legend_names.add('Sample Value')
-                self.logger.debug(f"Added Sample Value to legend")
+                if 'Sample Value' not in added_legend_names:
+                    sample_scatter = pg.PlotDataItem(
+                        x=[x_pos[0]], y=[sample_values[0]], pen=None, symbol='o', symbolSize=8,
+                        symbolPen='g', symbolBrush='g', name='Sample Value'
+                    )
+                    self.legend.addItem(sample_scatter, 'Sample Value')
+                    added_legend_names.add('Sample Value')
+                    self.logger.debug("Added Sample Value to legend")
 
+            # 3. Middle
             if self.show_middle.isChecked() and x_pos and middle_values:
-                scatter = pg.PlotDataItem(x=x_pos, y=middle_values, pen=None, symbol='s', symbolSize=6, symbolPen='g', symbolBrush='g', name='Middle')
+                scatter = pg.PlotDataItem(
+                    x=x_pos, y=middle_values, pen=None, symbol='s', symbolSize=6,
+                    symbolPen='g', symbolBrush='g', name='Middle'
+                )
                 self.main_plot.addItem(scatter)
-                self.legend.addItem(scatter, 'Middle')
-                added_legend_names.add('Middle')
-                self.logger.debug(f"Added Middle to legend")
+                if 'Middle' not in added_legend_names:
+                    self.legend.addItem(scatter, 'Middle')
+                    added_legend_names.add('Middle')
+                    self.logger.debug("Added Middle to legend")
 
+            # 4. Acceptable Range
             if self.show_range.isChecked() and x_pos and lower_bounds and upper_bounds:
                 for i in range(len(crm_ids)):
                     color = 'g' if calibration_min <= sample_values[i] <= calibration_max else 'r'
-                    line_lower = pg.PlotDataItem(x=[x_pos[i] - 0.2, x_pos[i] + 0.2], y=[lower_bounds[i], lower_bounds[i]], pen=pg.mkPen(color, width=2))
-                    line_upper = pg.PlotDataItem(x=[x_pos[i] - 0.2, x_pos[i] + 0.2], y=[upper_bounds[i], upper_bounds[i]], pen=pg.mkPen(color, width=2))
+                    line_lower = pg.PlotDataItem(
+                        x=[x_pos[i] - 0.2, x_pos[i] + 0.2], y=[lower_bounds[i], lower_bounds[i]],
+                        pen=pg.mkPen(color, width=2)
+                    )
+                    line_upper = pg.PlotDataItem(
+                        x=[x_pos[i] - 0.2, x_pos[i] + 0.2], y=[upper_bounds[i], upper_bounds[i]],
+                        pen=pg.mkPen(color, width=2)
+                    )
                     self.main_plot.addItem(line_lower)
                     self.main_plot.addItem(line_upper)
                 # Add a single legend item for Acceptable Range
-                range_item = pg.PlotDataItem(x=[x_pos[0] - 0.2, x_pos[0] + 0.2], y=[lower_bounds[0], lower_bounds[0]], pen=pg.mkPen('g', width=2), name='Acceptable Range')
-                self.legend.addItem(range_item, 'Acceptable Range')
-                added_legend_names.add('Acceptable Range')
-                self.logger.debug(f"Added Acceptable Range to legend")
+                if 'Acceptable Range' not in added_legend_names:
+                    range_item = pg.PlotDataItem(
+                        x=[x_pos[0] - 0.2, x_pos[0] + 0.2], y=[lower_bounds[0], lower_bounds[0]],
+                        pen=pg.mkPen('g', width=2), name='Acceptable Range'
+                    )
+                    self.legend.addItem(range_item, 'Acceptable Range')
+                    added_legend_names.add('Acceptable Range')
+                    self.logger.debug("Added Acceptable Range to legend")
 
             self.main_plot.showGrid(x=True, y=True, alpha=0.3)
-            self.logger.debug(f"Legend items after update: {[item[1].name() for item in self.legend.items if hasattr(item[1], 'name')]}")
-            if len(added_legend_names) != len(self.legend.items):
-                self.logger.warning(f"Expected 4 legend items, but found {len(self.legend.items)}: {[item[1].name() for item in self.legend.items if hasattr(item[1], 'name')]}")
+            # Verify exactly four legend items
+            current_legend_items = [item[1].name() for item in self.legend.items if hasattr(item[1], 'name')]
+            self.logger.debug(f"Legend items after update: {current_legend_items}")
+            if len(added_legend_names) != 4 or len(current_legend_items) != 4:
+                self.logger.warning(f"Expected exactly 4 legend items, but found {len(current_legend_items)}: {current_legend_items}")
 
         except Exception as e:
             self.main_plot.clear()
