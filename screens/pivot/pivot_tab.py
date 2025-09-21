@@ -1,9 +1,8 @@
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QMessageBox, QComboBox, QLabel, QFrame, QLineEdit, QCheckBox, QDialog, QHeaderView, QTableView)
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QMessageBox, QComboBox, QLabel, QFrame, QLineEdit, QCheckBox, QDialog, QHeaderView, QTableView, QScrollArea)
 from PyQt6.QtGui import QFont
 from PyQt6.QtCore import Qt
 from .freeze_table_widget import FreezeTableWidget
 from .pivot_table_model import PivotTableModel
-from .filter_dialog import FilterDialog
 from .pivot_plot_dialog import PivotPlotDialog
 from .crm_manager import CRMManager
 from .pivot_creator import PivotCreator
@@ -12,6 +11,84 @@ from .oxide_factors import oxide_factors
 import pandas as pd
 import logging
 import numpy as np
+
+class FilterDialog(QDialog):
+    """Dialog for filtering rows or columns with checkboxes."""
+    def __init__(self, parent, title, is_row_filter=True):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.parent = parent
+        self.is_row_filter = is_row_filter
+        self.checkboxes = {}
+        self.layout = QVBoxLayout(self)
+
+        # Scroll area for checkboxes
+        scroll = QScrollArea()
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout(scroll_widget)
+        scroll.setWidget(scroll_widget)
+        scroll.setWidgetResizable(True)
+        self.layout.addWidget(scroll)
+
+        self.populate_checkboxes(scroll_layout)
+
+        # Buttons
+        buttons = QHBoxLayout()
+        select_all_btn = QPushButton("Select All")
+        select_all_btn.clicked.connect(self.select_all)
+        buttons.addWidget(select_all_btn)
+
+        deselect_all_btn = QPushButton("Deselect All")
+        deselect_all_btn.clicked.connect(self.deselect_all)
+        buttons.addWidget(deselect_all_btn)
+
+        ok_btn = QPushButton("OK")
+        ok_btn.clicked.connect(self.apply_and_close)
+        buttons.addWidget(ok_btn)
+
+        self.layout.addLayout(buttons)
+
+    def populate_checkboxes(self, layout):
+        if self.parent.pivot_data is None:
+            return
+
+        if self.is_row_filter:
+            field = 'Solution Label'  # Assuming row filter is on Solution Label
+            unique_values = sorted(self.parent.pivot_data[field].unique())
+            filter_values = self.parent.row_filter_values.setdefault(field, {})
+        else:
+            field = 'Element'
+            if self.parent.use_oxide_var.isChecked():
+                unique_values = sorted([oxide_factors[el][0] for el in oxide_factors if oxide_factors[el][0] in self.parent.pivot_data.columns])
+            else:
+                unique_values = sorted([col for col in self.parent.pivot_data.columns if col != 'Solution Label'])
+            filter_values = self.parent.column_filter_values.setdefault(field, {})
+
+        for val in unique_values:
+            if val not in filter_values:
+                filter_values[val] = True
+            cb = QCheckBox(str(val))
+            cb.setChecked(filter_values[val])
+            cb.stateChanged.connect(lambda state, v=val: self.update_filter(v, state))
+            self.checkboxes[val] = cb
+            layout.addWidget(cb)
+
+    def update_filter(self, value, state):
+        field = 'Solution Label' if self.is_row_filter else 'Element'
+        filter_values = self.parent.row_filter_values if self.is_row_filter else self.parent.column_filter_values
+        filter_values[field][value] = bool(state == Qt.CheckState.Checked.value)
+
+    def select_all(self):
+        for cb in self.checkboxes.values():
+            cb.setChecked(True)
+
+    def deselect_all(self):
+        for cb in self.checkboxes.values():
+            cb.setChecked(False)
+
+    def apply_and_close(self):
+        self.parent.update_pivot_display()
+        self.accept()
 
 class PivotTab(QWidget):
     """PivotTab with inline CRM rows, difference coloring, and plot visualization."""
@@ -143,22 +220,23 @@ class PivotTab(QWidget):
             return
 
         df = self.pivot_data.copy()
-        print("Pivot data in update_pivot_display:", df)  # دیباگ
+        print("Pivot data in update_pivot_display:", df)  # Debug
 
         s = self.search_var.text().strip().lower()
         if s:
             mask = df.apply(lambda r: r.astype(str).str.lower().str.contains(s, na=False).any(), axis=1)
             df = df[mask]
 
+        # Apply row filters
         for field, values in self.row_filter_values.items():
             if field in df.columns:
                 selected = [k for k, v in values.items() if v]
                 if selected:
                     df = df[df[field].isin(selected)]
 
+        # Apply column filters
         selected_cols = ['Solution Label']
         if self.use_oxide_var.isChecked():
-            # استفاده از فرمول‌های اکسید برای فیلتر ستون‌ها
             for field, values in self.column_filter_values.items():
                 if field == 'Element':
                     selected_cols.extend([
@@ -175,10 +253,11 @@ class PivotTab(QWidget):
 
         df = df.reset_index(drop=True)
         self.current_view_df = df
-        print("Current view data:", df)  # دیباگ
+        print("Current view data:", df)  # Debug
 
+        # Rebuild CRM display for current columns without losing original CRM data
         self._inline_crm_rows_display = self.crm_manager._build_crm_row_lists_for_columns(list(df.columns))
-        print("CRM rows display:", self._inline_crm_rows_display)  # دیباگ
+        print("CRM rows display:", self._inline_crm_rows_display)  # Debug
 
         crm_rows = []
         for sol_label in df['Solution Label']:
@@ -194,7 +273,7 @@ class PivotTab(QWidget):
             if col < len(df.columns):
                 self.table_view.horizontalHeader().resizeSection(col, width)
         self.status_label.setText("Data loaded successfully")
-        self.table_view.viewport().update()  # رفرش دستی UI
+        self.table_view.viewport().update()  # Manual UI refresh
 
     def calculate_dynamic_range(self, value):
         try:
