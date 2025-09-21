@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QCheckBox, QLabel, QLineEdit, QPushButton, QMessageBox, QComboBox, QTreeView
-from PyQt6.QtCore import Qt, QPointF
-from PyQt6.QtGui import QColor, QStandardItemModel, QStandardItem
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QStandardItemModel, QStandardItem
 import pyqtgraph as pg
 import re
 import pandas as pd
@@ -161,14 +161,14 @@ class PivotPlotDialog(QDialog):
         try:
             # Clear the plot and legend completely
             self.main_plot.clear()
-            self.legend.clear()  # Ensure legend is fully cleared
+            self.legend.clear()
             self.logger.debug("Legend cleared at the start of update_plot")
             self.annotations.clear()
             added_legend_names = set()  # Track added legend names to ensure exactly four
 
             def extract_crm_id(label):
                 m = re.search(r'(?i)(?:CRM|par|OREAS)[\s-]*(\d+[a-zA-Z]?)', str(label))
-                return m.group(1) if m else None
+                return m.group(1) if m else str(label)  # Fallback to label if no ID found
 
             # Extract element name and wavelength
             element_name = self.selected_element.split()[0]
@@ -209,9 +209,17 @@ class PivotPlotDialog(QDialog):
             ]
             self.logger.debug(f"CRM labels: {crm_labels}")
 
+            # Group by verification ID
+            crm_id_to_labels = {}
+            for sol_label in crm_labels:
+                crm_id = extract_crm_id(sol_label)
+                if crm_id not in crm_id_to_labels:
+                    crm_id_to_labels[crm_id] = []
+                crm_id_to_labels[crm_id].append(sol_label)
+
             # Prepare data for plotting
-            crm_ids = []
-            x_pos = []
+            unique_crm_ids = sorted(crm_id_to_labels.keys())
+            x_pos_map = {crm_id: i for i, crm_id in enumerate(unique_crm_ids)}
             certificate_values = []
             sample_values = []
             corrected_sample_values = []
@@ -222,156 +230,163 @@ class PivotPlotDialog(QDialog):
             int_values = []
             icp_recoveries = []
             icp_statuses = []
+            x_positions = []
 
-            for sol_label in crm_labels:
-                pivot_row = self.parent.pivot_data[self.parent.pivot_data['Solution Label'] == sol_label]
-                if pivot_row.empty:
-                    self.logger.warning(f"No pivot data for Solution Label: {sol_label}")
-                    continue
-                pivot_val = pivot_row.iloc[0][self.selected_element]
-                crm_id = extract_crm_id(sol_label)
-                if not crm_id:
-                    self.logger.warning(f"No CRM ID extracted for Solution Label: {sol_label}")
-                    continue
-                
-                # Get Soln Conc and Int for this sample
-                sample_rows = self.parent.original_df[
-                    (self.parent.original_df['Solution Label'] == sol_label) &
-                    (self.parent.original_df['Element'].str.startswith(element_name)) &
-                    (self.parent.original_df['Type'].isin(['Samp', 'Sample']))
-                ]
-                soln_conc = sample_rows['Soln Conc'].iloc[0] if not sample_rows.empty else '---'
-                int_val = sample_rows['Int'].iloc[0] if not sample_rows.empty else '---'
-                
-                # Calculate RSD% (assuming multiple measurements are available)
-                int_values_list = sample_rows['Int'].dropna().astype(float).tolist()
-                rsd_percent = (np.std(int_values_list) / np.mean(int_values_list) * 100) if int_values_list and np.mean(int_values_list) != 0 else 0.0
-                
-                # Assume Detection Limit (DL) for the element
-                detection_limit = 0.2  # Placeholder
-                crm_source = "NIST"  # Placeholder
-                sample_matrix = "Soil"  # Placeholder
-                
-                for row_data, _ in self.parent._inline_crm_rows_display[sol_label]:
-                    if isinstance(row_data, list) and row_data and row_data[0].endswith("CRM"):
-                        val = row_data[self.parent.pivot_data.columns.get_loc(self.selected_element)] if self.selected_element in self.parent.pivot_data.columns else ""
-                        if not val or not val.strip():
-                            self.logger.warning(f"Empty or invalid CRM value for {sol_label}")
-                            continue
-                        if not self.is_numeric(val) or not self.is_numeric(pivot_val):
-                            annotation = f"Verification ID: {crm_id} (Label: {sol_label})"
-                            annotation += f"\n  - Certificate Value: {val}"
-                            annotation += f"\n  - Sample Value: {pivot_val}"
-                            annotation += f"\n  - Acceptable Range: [N/A]"
-                            annotation += f"\n  - Status: Out of range (non-numeric data)."
-                            annotation += f"\n  - Blank Value: {self.format_number(blank_val)}"
-                            annotation += f"\n  - Blank Correction Status: {blank_correction_status}"
-                            annotation += f"\n  - Sample Value - Blank: {pivot_val}"
-                            annotation += f"\n  - Corrected Range: [N/A]"
-                            annotation += f"\n  - Status after Blank Subtraction: Out of range (non-numeric data)."
-                            annotation += f"\n  - Soln Conc: {soln_conc} out_range"
-                            annotation += f"\n  - Int: {int_val}"
-                            annotation += f"\n  - Calibration Range: {calibration_range} out_range"
-                            annotation += f"\n  - ICP Recovery: N/A"
-                            annotation += f"\n  - ICP Status: Out Range"
-                            annotation += f"\n  - ICP Detection Limit: {detection_limit}"
-                            annotation += f"\n  - ICP RSD%: {rsd_percent:.2f}%"
-                            annotation += f"\n  - CRM Source: {crm_source}"
-                            annotation += f"\n  - Sample Matrix: {sample_matrix}"
-                            annotation += f"\n  - Element Wavelength: {wavelength}"
-                            annotation += f"\n  - Analysis Date: {analysis_date}"
-                            self.annotations.append(annotation)
-                            self.logger.debug(f"Non-numeric data detected for {sol_label}: Certificate={val}, Sample={pivot_val}")
-                            continue
-
-                        try:
-                            crm_val = float(val)
-                            pivot_val_float = float(pivot_val)
-                            # Calculate ICP Recovery
-                            icp_recovery = (pivot_val_float / crm_val * 100) if crm_val != 0 else 0
-                            in_icp_range = 90 <= icp_recovery <= 110
-                            icp_status = 'In Range' if in_icp_range else 'Out Range'
-                            
-                            # Acceptable range based on selected percent
-                            range_val = crm_val * (self.range_percent / 100)
-                            lower = crm_val - range_val
-                            upper = crm_val + range_val
-                            in_range = lower <= pivot_val_float <= upper
-
-                            annotation = f"Verification ID: {crm_id} (Label: {sol_label})"
-                            annotation += f"\n  - Certificate Value: {self.format_number(crm_val)}"
-                            annotation += f"\n  - Sample Value: {self.format_number(pivot_val_float)}"
-                            annotation += f"\n  - Acceptable Range: [{self.format_number(lower)} to {self.format_number(upper)}]"
-                            corrected_in_range = False
-                            if in_range:
-                                annotation += f"\n  - Status: In range (no adjustment needed)."
-                                corrected_pivot = pivot_val_float
-                                corrected_in_range = True
-                                annotation += f"\n  - Blank Value: {self.format_number(blank_val)}"
-                                annotation += f"\n  - Blank Correction Status: Not Applied (in range)"
-                                annotation += f"\n  - Corrected Sample Value: {self.format_number(corrected_pivot)}"
-                                annotation += f"\n  - Status after Blank Subtraction: In range."
-                            else:
-                                annotation += f"\n  - Status: Out of range without adjustment."
-                                corrected_pivot = pivot_val_float - blank_val
+            for crm_id in unique_crm_ids:
+                x_pos = x_pos_map[crm_id]
+                for sol_label in crm_id_to_labels[crm_id]:
+                    pivot_row = self.parent.pivot_data[self.parent.pivot_data['Solution Label'] == sol_label]
+                    if pivot_row.empty:
+                        self.logger.warning(f"No pivot data for Solution Label: {sol_label}")
+                        continue
+                    pivot_val = pivot_row.iloc[0][self.selected_element]
+                    self.logger.debug(f"Processing {sol_label}: pivot_val={pivot_val}, type={type(pivot_val)}")
+                    
+                    # Validate pivot_val
+                    if pd.isna(pivot_val) or pivot_val is None:
+                        self.logger.warning(f"Invalid pivot value for {sol_label}: {pivot_val}")
+                        pivot_val = 0  # Default to 0 if invalid
+                    elif not self.is_numeric(pivot_val):
+                        self.logger.warning(f"Non-numeric pivot value for {sol_label}: {pivot_val}")
+                        pivot_val = 0  # Default to 0 if non-numeric
+                    
+                    # Get Soln Conc and Int for this sample
+                    sample_rows = self.parent.original_df[
+                        (self.parent.original_df['Solution Label'] == sol_label) &
+                        (self.parent.original_df['Element'].str.startswith(element_name)) &
+                        (self.parent.original_df['Type'].isin(['Samp', 'Sample']))
+                    ]
+                    soln_conc = sample_rows['Soln Conc'].iloc[0] if not sample_rows.empty else '---'
+                    int_val = sample_rows['Int'].iloc[0] if not sample_rows.empty else '---'
+                    
+                    # Calculate RSD% (assuming multiple measurements are available)
+                    int_values_list = sample_rows['Int'].dropna().astype(float).tolist()
+                    rsd_percent = (np.std(int_values_list) / np.mean(int_values_list) * 100) if int_values_list and np.mean(int_values_list) != 0 else 0.0
+                    
+                    # Assume Detection Limit (DL) for the element
+                    detection_limit = 0.2  # Placeholder
+                    crm_source = "NIST"  # Placeholder
+                    sample_matrix = "Soil"  # Placeholder
+                    
+                    for row_data, _ in self.parent._inline_crm_rows_display[sol_label]:
+                        if isinstance(row_data, list) and row_data and row_data[0].endswith("CRM"):
+                            val = row_data[self.parent.pivot_data.columns.get_loc(self.selected_element)] if self.selected_element in self.parent.pivot_data.columns else ""
+                            if not val or not val.strip():
+                                self.logger.warning(f"Empty or invalid CRM value for {sol_label}: {val}")
+                                continue
+                            if not self.is_numeric(val) or not self.is_numeric(pivot_val):
+                                annotation = f"Verification ID: {crm_id} (Label: {sol_label})"
+                                annotation += f"\n  - Certificate Value: {val}"
+                                annotation += f"\n  - Sample Value: {self.format_number(pivot_val)}"
+                                annotation += f"\n  - Acceptable Range: [N/A]"
+                                annotation += f"\n  - Status: Out of range (non-numeric data)."
                                 annotation += f"\n  - Blank Value: {self.format_number(blank_val)}"
                                 annotation += f"\n  - Blank Correction Status: {blank_correction_status}"
-                                annotation += f"\n  - Sample Value - Blank: {self.format_number(corrected_pivot)}"
-                                annotation += f"\n  - Corrected Range: [{self.format_number(lower)} to {self.format_number(upper)}]"
-                                if corrected_in_range:
+                                annotation += f"\n  - Sample Value - Blank: {self.format_number(pivot_val)}"
+                                annotation += f"\n  - Corrected Range: [N/A]"
+                                annotation += f"\n  - Status after Blank Subtraction: Out of range (non-numeric data)."
+                                annotation += f"\n  - Soln Conc: {soln_conc} out_range"
+                                annotation += f"\n  - Int: {int_val}"
+                                annotation += f"\n  - Calibration Range: {calibration_range} out_range"
+                                annotation += f"\n  - ICP Recovery: N/A"
+                                annotation += f"\n  - ICP Status: Out Range"
+                                annotation += f"\n  - ICP Detection Limit: {detection_limit}"
+                                annotation += f"\n  - ICP RSD%: {rsd_percent:.2f}%"
+                                annotation += f"\n  - CRM Source: {crm_source}"
+                                annotation += f"\n  - Sample Matrix: {sample_matrix}"
+                                annotation += f"\n  - Element Wavelength: {wavelength}"
+                                annotation += f"\n  - Analysis Date: {analysis_date}"
+                                self.annotations.append(annotation)
+                                self.logger.debug(f"Non-numeric data detected for {sol_label}: Certificate={val}, Sample={pivot_val}")
+                                continue
+
+                            try:
+                                crm_val = float(val)
+                                pivot_val_float = float(pivot_val)
+                                # Calculate ICP Recovery
+                                icp_recovery = (pivot_val_float / crm_val * 100) if crm_val != 0 else 0
+                                in_icp_range = 90 <= icp_recovery <= 110
+                                icp_status = 'In Range' if in_icp_range else 'Out Range'
+                                
+                                # Acceptable range based on selected percent
+                                range_val = crm_val * (self.range_percent / 100)
+                                lower = crm_val - range_val
+                                upper = crm_val + range_val
+                                in_range = lower <= pivot_val_float <= upper
+
+                                annotation = f"Verification ID: {crm_id} (Label: {sol_label})"
+                                annotation += f"\n  - Certificate Value: {self.format_number(crm_val)}"
+                                annotation += f"\n  - Sample Value: {self.format_number(pivot_val_float)}"
+                                annotation += f"\n  - Acceptable Range: [{self.format_number(lower)} to {self.format_number(upper)}]"
+                                corrected_in_range = False
+                                if in_range:
+                                    annotation += f"\n  - Status: In range (no adjustment needed)."
+                                    corrected_pivot = pivot_val_float
+                                    corrected_in_range = True
+                                    annotation += f"\n  - Blank Value: {self.format_number(blank_val)}"
+                                    annotation += f"\n  - Blank Correction Status: Not Applied (in range)"
+                                    annotation += f"\n  - Corrected Sample Value: {self.format_number(corrected_pivot)}"
                                     annotation += f"\n  - Status after Blank Subtraction: In range."
                                 else:
-                                    annotation += f"\n  - Status after Blank Subtraction: Out of range."
-                                    if corrected_pivot != 0:
-                                        if corrected_pivot < lower:
-                                            scale_factor = lower / corrected_pivot
-                                            direction = "increase"
-                                        elif corrected_pivot > upper:
-                                            scale_factor = upper / corrected_pivot
-                                            direction = "decrease"
-                                        else:
-                                            scale_factor = 1.0
-                                            direction = ""
-                                        scale_percent = abs((scale_factor - 1) * 100)
-                                        annotation += f"\n  - Required Scaling: {scale_percent:.2f}% {direction} to fit within range."
-                                        if scale_percent > 200:
-                                            annotation += f"\n  - Warning: Scaling exceeds 200% ({scale_percent:.2f}%). This point is problematic and may require further investigation."
+                                    annotation += f"\n  - Status: Out of range without adjustment."
+                                    corrected_pivot = pivot_val_float - blank_val
+                                    annotation += f"\n  - Blank Value: {self.format_number(blank_val)}"
+                                    annotation += f"\n  - Blank Correction Status: {blank_correction_status}"
+                                    annotation += f"\n  - Sample Value - Blank: {self.format_number(corrected_pivot)}"
+                                    annotation += f"\n  - Corrected Range: [{self.format_number(lower)} to {self.format_number(upper)}]"
+                                    if corrected_in_range:
+                                        annotation += f"\n  - Status after Blank Subtraction: In range."
                                     else:
-                                        annotation += f"\n  - Scaling not applicable (corrected sample value is zero)."
-                            
-                            in_calibration_range_soln = calibration_min <= float(soln_conc) <= calibration_max if self.is_numeric(soln_conc) and (calibration_min != 0 or calibration_max != 0) else False
-                            annotation += f"\n  - Soln Conc: {soln_conc if isinstance(soln_conc, str) else self.format_number(soln_conc)} {'in_range' if in_calibration_range_soln else 'out_range'}"
-                            annotation += f"\n  - Int: {int_val if isinstance(int_val, str) else self.format_number(int_val)}"
-                            annotation += f"\n  - Calibration Range: {calibration_range} {'in_range' if in_calibration_range_soln else 'out_range'}"
-                            annotation += f"\n  - ICP Recovery: {icp_recovery:.2f}% {'in_range' if in_icp_range else 'out_range'}"
-                            annotation += f"\n  - ICP Status: {icp_status}"
-                            annotation += f"\n  - ICP Detection Limit: {self.format_number(detection_limit)}"
-                            annotation += f"\n  - ICP RSD%: {rsd_percent:.2f}%"
-                            annotation += f"\n  - CRM Source: {crm_source}"
-                            annotation += f"\n  - Sample Matrix: {sample_matrix}"
-                            annotation += f"\n  - Element Wavelength: {wavelength}"
-                            annotation += f"\n  - Analysis Date: {analysis_date}"
+                                        annotation += f"\n  - Status after Blank Subtraction: Out of range."
+                                        if corrected_pivot != 0:
+                                            if corrected_pivot < lower:
+                                                scale_factor = lower / corrected_pivot
+                                                direction = "increase"
+                                            elif corrected_pivot > upper:
+                                                scale_factor = upper / corrected_pivot
+                                                direction = "decrease"
+                                            else:
+                                                scale_factor = 1.0
+                                                direction = ""
+                                            scale_percent = abs((scale_factor - 1) * 100)
+                                            annotation += f"\n  - Required Scaling: {scale_percent:.2f}% {direction} to fit within range."
+                                            if scale_percent > 200:
+                                                annotation += f"\n  - Warning: Scaling exceeds 200% ({scale_percent:.2f}%). This point is problematic and may require further investigation."
+                                        else:
+                                            annotation += f"\n  - Scaling not applicable (corrected sample value is zero)."
+                                
+                                in_calibration_range_soln = calibration_min <= float(soln_conc) <= calibration_max if self.is_numeric(soln_conc) and (calibration_min != 0 or calibration_max != 0) else False
+                                annotation += f"\n  - Soln Conc: {soln_conc if isinstance(soln_conc, str) else self.format_number(soln_conc)} {'in_range' if in_calibration_range_soln else 'out_range'}"
+                                annotation += f"\n  - Int: {int_val if isinstance(int_val, str) else self.format_number(int_val)}"
+                                annotation += f"\n  - Calibration Range: {calibration_range} {'in_range' if in_calibration_range_soln else 'out_range'}"
+                                annotation += f"\n  - ICP Recovery: {icp_recovery:.2f}% {'in_range' if in_icp_range else 'out_range'}"
+                                annotation += f"\n  - ICP Status: {icp_status}"
+                                annotation += f"\n  - ICP Detection Limit: {self.format_number(detection_limit)}"
+                                annotation += f"\n  - ICP RSD%: {rsd_percent:.2f}%"
+                                annotation += f"\n  - CRM Source: {crm_source}"
+                                annotation += f"\n  - Sample Matrix: {sample_matrix}"
+                                annotation += f"\n  - Element Wavelength: {wavelength}"
+                                annotation += f"\n  - Analysis Date: {analysis_date}"
 
-                            self.annotations.append(annotation)
-                            
-                            # Add to plotting data
-                            crm_ids.append(crm_id)
-                            x_pos.append(len(crm_ids) - 0.5)
-                            certificate_values.append(crm_val)
-                            sample_values.append(pivot_val_float)
-                            corrected_sample_values.append(corrected_pivot)
-                            lower_bounds.append(lower)
-                            upper_bounds.append(upper)
-                            middle_values.append((crm_val + pivot_val_float) / 2)
-                            soln_concs.append(soln_conc)
-                            int_values.append(int_val)
-                            icp_recoveries.append(icp_recovery)
-                            icp_statuses.append(icp_status)
-                        except ValueError as e:
-                            self.logger.error(f"ValueError in processing data for {sol_label}: {str(e)}")
-                            continue
+                                self.annotations.append(annotation)
+                                
+                                # Add to plotting data
+                                x_positions.append(x_pos)
+                                certificate_values.append(crm_val)
+                                sample_values.append(pivot_val_float)
+                                corrected_sample_values.append(corrected_pivot)
+                                lower_bounds.append(lower)
+                                upper_bounds.append(upper)
+                                middle_values.append((crm_val + pivot_val_float) / 2)
+                                soln_concs.append(soln_conc)
+                                int_values.append(int_val)
+                                icp_recoveries.append(icp_recovery)
+                                icp_statuses.append(icp_status)
+                            except ValueError as e:
+                                self.logger.error(f"ValueError in processing data for {sol_label}: {str(e)}")
+                                continue
 
-            if not crm_ids:
+            if not unique_crm_ids:
                 self.main_plot.clear()
                 self.legend.clear()
                 self.logger.warning(f"No valid Verification data for {self.selected_element}. CRM labels: {crm_labels}")
@@ -382,21 +397,21 @@ class PivotPlotDialog(QDialog):
             self.main_plot.setLabel('bottom', 'Verification ID')
             self.main_plot.setLabel('left', f'{self.selected_element} Value')
             self.main_plot.setTitle(f'Verification Values for {self.selected_element}')
-            self.main_plot.getAxis('bottom').setTicks([[(i - 0.5, f'V {id}') for i, id in enumerate(crm_ids)]])
+            self.main_plot.getAxis('bottom').setTicks([[(i, f'V {id}') for i, id in enumerate(unique_crm_ids)]])
             y_values = certificate_values + sample_values + corrected_sample_values + lower_bounds + upper_bounds + middle_values
             if y_values:
                 y_min, y_max = min(y_values), max(y_values)
                 margin = (y_max - y_min) * 0.1
-                self.main_plot.setXRange(-0.5, len(crm_ids) - 0.5)
+                self.main_plot.setXRange(-0.5, len(unique_crm_ids) - 0.5)
                 self.main_plot.setYRange(y_min - margin, y_max + margin)
-                self.initial_ranges['main_x'] = (-0.5, len(crm_ids) - 0.5)
+                self.initial_ranges['main_x'] = (-0.5, len(unique_crm_ids) - 0.5)
                 self.initial_ranges['main_y'] = (y_min - margin, y_max + margin)
 
             # Plot main chart and add exactly four legend items
-            # 1. Certificate Value
-            if self.show_check_crm.isChecked() and x_pos and certificate_values:
+            # 1. Certificate Value (Red, Circle)
+            if self.show_check_crm.isChecked() and x_positions and certificate_values:
                 scatter = pg.PlotDataItem(
-                    x=x_pos, y=certificate_values, pen=None, symbol='o', symbolSize=8,
+                    x=x_positions, y=certificate_values, pen=None, symbol='o', symbolSize=8,
                     symbolPen='r', symbolBrush='r', name='Certificate Value'
                 )
                 self.main_plot.addItem(scatter)
@@ -405,29 +420,28 @@ class PivotPlotDialog(QDialog):
                     added_legend_names.add('Certificate Value')
                     self.logger.debug("Added Certificate Value to legend")
 
-            # 2. Sample Value
-            if self.show_pivot_crm.isChecked() and x_pos and sample_values:
-                for i in range(len(crm_ids)):
-                    color = 'g' if lower_bounds[i] <= sample_values[i] <= upper_bounds[i] else 'r'
+            # 2. Sample Value (Green, Triangle)
+            if self.show_pivot_crm.isChecked() and x_positions and sample_values:
+                for i in range(len(x_positions)):
                     scatter = pg.PlotDataItem(
-                        x=[x_pos[i]], y=[sample_values[i]], pen=None, symbol='o', symbolSize=8,
-                        symbolPen=color, symbolBrush=color
+                        x=[x_positions[i]], y=[sample_values[i]], pen=None, symbol='t', symbolSize=8,
+                        symbolPen='g', symbolBrush='g'
                     )
                     self.main_plot.addItem(scatter)
                 # Add a single legend item for Sample Value
                 if 'Sample Value' not in added_legend_names:
                     sample_scatter = pg.PlotDataItem(
-                        x=[x_pos[0]], y=[sample_values[0]], pen=None, symbol='o', symbolSize=8,
+                        x=[x_positions[0]], y=[sample_values[0]], pen=None, symbol='t', symbolSize=8,
                         symbolPen='g', symbolBrush='g', name='Sample Value'
                     )
                     self.legend.addItem(sample_scatter, 'Sample Value')
                     added_legend_names.add('Sample Value')
                     self.logger.debug("Added Sample Value to legend")
 
-            # 3. Middle
-            if self.show_middle.isChecked() and x_pos and middle_values:
+            # 3. Middle (Green, Square)
+            if self.show_middle.isChecked() and x_positions and middle_values:
                 scatter = pg.PlotDataItem(
-                    x=x_pos, y=middle_values, pen=None, symbol='s', symbolSize=6,
+                    x=x_positions, y=middle_values, pen=None, symbol='s', symbolSize=6,
                     symbolPen='g', symbolBrush='g', name='Middle'
                 )
                 self.main_plot.addItem(scatter)
@@ -436,24 +450,23 @@ class PivotPlotDialog(QDialog):
                     added_legend_names.add('Middle')
                     self.logger.debug("Added Middle to legend")
 
-            # 4. Acceptable Range
-            if self.show_range.isChecked() and x_pos and lower_bounds and upper_bounds:
-                for i in range(len(crm_ids)):
-                    color = 'g' if calibration_min <= sample_values[i] <= calibration_max else 'r'
+            # 4. Acceptable Range (Green Lines)
+            if self.show_range.isChecked() and x_positions and lower_bounds and upper_bounds:
+                for i in range(len(x_positions)):
                     line_lower = pg.PlotDataItem(
-                        x=[x_pos[i] - 0.2, x_pos[i] + 0.2], y=[lower_bounds[i], lower_bounds[i]],
-                        pen=pg.mkPen(color, width=2)
+                        x=[x_positions[i] - 0.2, x_positions[i] + 0.2], y=[lower_bounds[i], lower_bounds[i]],
+                        pen=pg.mkPen('g', width=2)
                     )
                     line_upper = pg.PlotDataItem(
-                        x=[x_pos[i] - 0.2, x_pos[i] + 0.2], y=[upper_bounds[i], upper_bounds[i]],
-                        pen=pg.mkPen(color, width=2)
+                        x=[x_positions[i] - 0.2, x_positions[i] + 0.2], y=[upper_bounds[i], upper_bounds[i]],
+                        pen=pg.mkPen('g', width=2)
                     )
                     self.main_plot.addItem(line_lower)
                     self.main_plot.addItem(line_upper)
                 # Add a single legend item for Acceptable Range
                 if 'Acceptable Range' not in added_legend_names:
                     range_item = pg.PlotDataItem(
-                        x=[x_pos[0] - 0.2, x_pos[0] + 0.2], y=[lower_bounds[0], lower_bounds[0]],
+                        x=[x_positions[0] - 0.2, x_positions[0] + 0.2], y=[lower_bounds[0], lower_bounds[0]],
                         pen=pg.mkPen('g', width=2), name='Acceptable Range'
                     )
                     self.legend.addItem(range_item, 'Acceptable Range')
