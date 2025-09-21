@@ -202,6 +202,19 @@ class PivotTab(QWidget):
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.status_label)
 
+    def is_numeric(self, value):
+            try:
+                float(value)
+                return True
+            except (ValueError, TypeError):
+                return False
+
+    def format_value(self, x):
+        try:
+            d = int(self.decimal_places.currentText())
+            return f"{float(x):.{d}f}"
+        except (ValueError, TypeError):
+            return "" if pd.isna(x) or x is None else str(x)
     def validate_diff_range(self):
         try:
             min_val = float(self.diff_min.text())
