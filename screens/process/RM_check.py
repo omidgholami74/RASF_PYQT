@@ -61,7 +61,7 @@ class PlotWindow(QMainWindow):
         title_item = pg.LabelItem(f"Scatter Plot of {self.y_column} vs {self.x_column}", size='12pt', bold=True)
         layout_widget.addItem(title_item, row=0, col=0)
         plot = layout_widget.addPlot(row=1, col=0)
-        plot.plot(x_values, y_values, pen=None, symbol='o', symbolSize=8, symbolBrush='b', name=f"{self.y_column} Data")  # Added name for legend
+        plot.plot(x_values, y_values, pen=None, symbol='o', symbolSize=8, symbolBrush='b', name=f"{self.y_column} Data")
         plot.setLabel('bottom', self.x_column)
         plot.setLabel('left', self.y_column)
 
@@ -73,7 +73,7 @@ class PlotWindow(QMainWindow):
         if not y_values.empty:
             plot.setYRange(y_values.min(), y_values.max())
 
-        legend = plot.addLegend(offset=(10, 10))  # Explicitly set offset to ensure visibility
+        legend = plot.addLegend(offset=(10, 10))
         self.setCentralWidget(layout_widget)
         logger.debug(f"Scatter plot setup completed for {self.y_column}")
 
@@ -81,26 +81,31 @@ class CheckRMFrame(QWidget):
     def __init__(self, app, parent=None):
         super().__init__(parent)
         self.app = app
+        self.reset_state()
+        self.corrections_file = "user_corrections.json"
+        self.load_user_corrections()
+        self.setup_ui()
+        logger.debug("CheckRMFrame initialized")
+
+    def reset_state(self):
+        """Reset all state variables to ensure a clean slate."""
         self.rm_df = None
         self.positions_df = None
         self.original_df = None
-        self.outliers = {}
-        self.current_label = None
         self.corrected_df = None
-        self.selected_element = None
-        self.selected_row_id_pair = None
-        self.corrections_applied = False
+        self.outliers = {}
         self.ratios = {}
         self.non_outlier_ratios = {}
         self.selected_outliers = {}
         self.ignored_outliers = {}
-        self.user_corrections = {}
-        self.corrections_file = "user_corrections.json"
-        self.plot_windows = {}
+        self.current_label = None
+        self.selected_element = None
+        self.selected_row_id_pair = None
+        self.corrections_applied = False
         self.current_between_df = None
-        self.load_user_corrections()
-        self.setup_ui()
-        logger.debug("CheckRMFrame initialized")
+        self.plot_windows = {}
+        self.user_corrections = {}
+        logger.debug("State reset")
 
     def configure_style(self):
         """Apply consistent styling to the frame."""
@@ -333,7 +338,6 @@ class CheckRMFrame(QWidget):
         logger.debug(f"open_plot_window called for column: {column}")
         logger.debug(f"current_between_df is None: {self.current_between_df is None}")
 
-        # Use current_between_df directly
         if self.current_between_df is None or self.current_between_df.empty:
             logger.debug("current_between_df is None or empty")
             QMessageBox.warning(self, "Warning", "No data available to plot.")
@@ -344,43 +348,34 @@ class CheckRMFrame(QWidget):
         logger.debug(f"current_between_df columns: {plot_df.columns.tolist()}")
 
         try:
-            # Ensure column exists, add with NaN if missing
             if column not in plot_df.columns:
                 logger.debug(f"Column {column} not in plot_df, adding with NaN")
                 plot_df[column] = np.nan
 
-            # Use index as x-axis
-            plot_df = plot_df.reset_index()
+            plot_df = plot_df.reset_index(drop=True)
             plot_df['index'] = plot_df.index
 
-            # Log data state before filtering
             logger.debug(f"plot_df before filtering: {len(plot_df)} rows")
             logger.debug(f"NaN count in {column}: {plot_df[column].isna().sum()}")
             logger.debug(f"NaN count in index: {plot_df['index'].isna().sum()}")
 
-            # Filter for valid data (non-NaN and numeric) using index as x-axis
             plot_df = plot_df[['index', column]].copy()
             plot_df['index'] = pd.to_numeric(plot_df['index'], errors='coerce')
             plot_df[column] = pd.to_numeric(plot_df[column], errors='coerce')
             valid_data = plot_df.dropna()
 
-            # Log skipped data points
             skipped_count = len(plot_df) - len(valid_data)
             if skipped_count > 0:
                 logger.debug(f"Skipped {skipped_count} invalid or NaN data points for column {column}")
 
-            # Check if there is valid data to plot
             if valid_data.empty:
                 logger.debug(f"No valid data to plot for column {column}")
                 QMessageBox.warning(self, "Warning", f"No valid data to plot for {column}.")
                 return
 
-            # Log valid data
             logger.debug(f"Valid data for plotting: {len(valid_data)} rows")
             logger.debug(f"Valid data sample: {valid_data.head().to_dict()}")
 
-            # Create and show the plot window
-            logger.debug(f"Creating PlotWindow for column: {column} with {len(valid_data)} valid data points")
             window = PlotWindow(f"Scatter Plot for {column}", valid_data, "index", column)
             window.show()
             window.raise_()
@@ -396,6 +391,8 @@ class CheckRMFrame(QWidget):
     def check_rm_changes(self):
         """Check for RM changes and detect outliers."""
         start_time = time.time()
+        self.reset_state()  # Reset state to ensure a clean slate
+
         try:
             threshold_percent = float(self.threshold_entry.text())
             threshold = threshold_percent / 100
@@ -419,29 +416,75 @@ class CheckRMFrame(QWidget):
             QMessageBox.critical(self, "Error", f"Missing required columns: {missing_columns}")
             return
 
-        self.original_df = df.copy(deep=True)
-        self.original_df.reset_index(inplace=True)
-        self.original_df.rename(columns={'index': 'original_index'}, inplace=True)
+        # Log input DataFrame for debugging
+        logger.debug(f"Input DataFrame shape: {df.shape}")
+        logger.debug(f"Input DataFrame columns: {df.columns.tolist()}")
+        logger.debug(f"Input DataFrame index duplicates: {df.index.duplicated().sum()}")
 
+        # Initialize self.original_df
+        self.original_df = df.copy(deep=True)
+        if 'original_index' in self.original_df.columns:
+            logger.debug("Dropping existing 'original_index' from original_df")
+            self.original_df = self.original_df.drop(columns=['original_index'])
+        if 'row_id' in self.original_df.columns:
+            logger.debug("Dropping existing 'row_id' from original_df")
+            self.original_df = self.original_df.drop(columns=['row_id'])
+        self.original_df = self.original_df.reset_index(drop=True)
+        self.original_df['original_index'] = self.original_df.index
+        logger.debug(f"original_df columns: {self.original_df.columns.tolist()}")
+        logger.debug(f"original_index duplicates in original_df: {self.original_df['original_index'].duplicated().sum()}")
+
+        # Filter for 'Samp' type
         df_filtered = df[df['Type'] == 'Samp'].copy(deep=True)
         if df_filtered.empty:
             QMessageBox.critical(self, "Error", f"No data with Type='Samp' found. Number of rows: {len(df)}")
             return
+        if 'original_index' in df_filtered.columns:
+            logger.debug("Dropping existing 'original_index' from df_filtered")
+            df_filtered = df_filtered.drop(columns=['original_index'])
+        if 'row_id' in df_filtered.columns:
+            logger.debug("Dropping existing 'row_id' from df_filtered")
+            df_filtered = df_filtered.drop(columns=['row_id'])
+        df_filtered = df_filtered.reset_index(drop=True)
+        df_filtered['original_index'] = df_filtered.index
+        logger.debug(f"df_filtered columns: {df_filtered.columns.tolist()}")
+        logger.debug(f"original_index duplicates in df_filtered: {df_filtered['original_index'].duplicated().sum()}")
 
-        df_filtered.reset_index(inplace=True)
-        df_filtered.rename(columns={'index': 'original_index'}, inplace=True)
+        # Clean 'Solution Label' and add 'row_id'
         df_filtered['Solution Label'] = df_filtered['Solution Label'].str.replace(
             rf'^{keyword}\s*[-]?\s*(\d*)$', rf'{keyword}\1', regex=True
         )
         df_filtered['row_id'] = df_filtered.groupby(['Solution Label', 'Element']).cumcount()
 
-        self.original_df = self.original_df.merge(
-            df_filtered[['original_index', 'Solution Label', 'Element', 'row_id']],
-            on=['original_index', 'Solution Label', 'Element'],
-            how='left'
-        )
+        # Log DataFrames before merge
+        logger.debug(f"self.original_df head:\n{self.original_df.head().to_string()}")
+        logger.debug(f"df_filtered head:\n{df_filtered.head().to_string()}")
+
+        # Perform the merge
+        try:
+            self.original_df = self.original_df.merge(
+                df_filtered[['original_index', 'Solution Label', 'Element', 'row_id']],
+                on=['Solution Label', 'Element', 'original_index'],
+                how='left'
+            )
+            logger.debug(f"Post-merge original_df columns: {self.original_df.columns.tolist()}")
+            logger.debug(f"Post-merge original_df shape: {self.original_df.shape}")
+            logger.debug(f"Post-merge row_id NaN count: {self.original_df['row_id'].isna().sum()}")
+        except Exception as e:
+            logger.error(f"Merge failed: {e}")
+            QMessageBox.critical(self, "Error", f"Merge failed: {str(e)}")
+            return
+
+        # Check if 'row_id' exists after merge
+        if 'row_id' not in self.original_df.columns:
+            logger.error("Merge did not include 'row_id' column")
+            QMessageBox.critical(self, "Error", "Merge failed to include 'row_id' column. Check data consistency.")
+            return
+
+        # Handle 'row_id' column
         self.original_df['row_id'] = self.original_df['row_id'].fillna(-1).astype(int)
 
+        # Convert numeric columns
         numeric_columns = ['Corr Con', 'Act Wgt', 'Act Vol', 'Coeff 1', 'Coeff 2']
         for col in numeric_columns:
             df_filtered[col] = pd.to_numeric(df_filtered[col], errors='coerce')
@@ -688,19 +731,16 @@ class CheckRMFrame(QWidget):
     def display_between_df(self, df):
         """Display corrected DataFrame in the corrected_table and store computed values in current_between_df."""
         logger.debug("Entering display_between_df")
-        # Create a copy of the input DataFrame or initialize an empty one
         self.current_between_df = df.copy() if df is not None and not df.empty else pd.DataFrame(columns=["Solution Label", "Element", "Previous Corr Con", "Corr Con", "Soln Conc", "Intense", "Previous Intense", "Soln Conc (No RM)", "Intense (No RM)", "row_id", "original_index", "Act Wgt", "Act Vol", "Coeff 1", "Coeff 2"])
         logger.debug(f"current_between_df initialized with {len(self.current_between_df)} rows")
         logger.debug(f"current_between_df columns: {self.current_between_df.columns.tolist()}")
 
-        # Ensure all required columns exist in current_between_df
         required_columns = ["Solution Label", "Element", "Previous Corr Con", "Corr Con", "Soln Conc", "Intense", "Previous Intense", "Soln Conc (No RM)", "Intense (No RM)", "row_id", "original_index", "Act Wgt", "Act Vol", "Coeff 1", "Coeff 2"]
         for col in required_columns:
             if col not in self.current_between_df.columns:
                 self.current_between_df[col] = np.nan
                 logger.debug(f"Added missing column {col} with NaN")
 
-        # Initialize computed columns with NaN
         self.current_between_df["Previous Corr Con"] = np.nan
         self.current_between_df["Soln Conc"] = np.nan
         self.current_between_df["Intense"] = np.nan
@@ -708,7 +748,6 @@ class CheckRMFrame(QWidget):
         self.current_between_df["Soln Conc (No RM)"] = np.nan
         self.current_between_df["Intense (No RM)"] = np.nan
 
-        # Compute values and store in current_between_df
         for idx, row in self.current_between_df.iterrows():
             original_row = self.original_df[
                 (self.original_df['Solution Label'] == row['Solution Label']) &
@@ -737,7 +776,6 @@ class CheckRMFrame(QWidget):
                 intense_no_rm = soln_conc_no_rm * coeff_2 + coeff_1 if pd.notna(soln_conc_no_rm) and pd.notna(coeff_2) and pd.notna(coeff_1) else np.nan
                 prev_intense = soln_conc_no_rm * coeff_2 + coeff_1 if pd.notna(soln_conc_no_rm) and pd.notna(coeff_2) and pd.notna(coeff_1) else np.nan
 
-                # Store computed values in current_between_df
                 self.current_between_df.at[idx, "Previous Corr Con"] = prev_corr_con
                 self.current_between_df.at[idx, "Soln Conc"] = soln_conc
                 self.current_between_df.at[idx, "Intense"] = intense
@@ -749,13 +787,11 @@ class CheckRMFrame(QWidget):
             except (TypeError, ValueError) as e:
                 logger.error(f"Error computing values for row {idx}: {e}")
 
-        # Log NaN counts for numeric columns
         numeric_cols = ["Previous Corr Con", "Corr Con", "Soln Conc", "Intense", "Previous Intense", "Soln Conc (No RM)", "Intense (No RM)"]
         for col in numeric_cols:
             if col in self.current_between_df.columns:
                 logger.debug(f"NaN count in {col}: {self.current_between_df[col].isna().sum()}")
 
-        # Populate the UI table
         model = QStandardItemModel()
         columns = ["Solution Label", "Element", "Previous Corr Con", "Corr Con", "Soln Conc", "Intense", 
                    "Previous Intense", "Soln Conc (No RM)", "Intense (No RM)", "row_id"]
@@ -1098,7 +1134,7 @@ class CheckRMFrame(QWidget):
                 QMessageBox.critical(self, "Error", f"No data found for {self.current_label}.")
                 return
 
-            label_df_original = label_df_original.reset_index()
+            label_df_original = label_df_original.reset_index(drop=True)
             sample_index = np.array(label_df_original.index)
             values_original = pd.to_numeric(label_df_original[element], errors='coerce').values
             valid_mask = ~np.isnan(values_original)
@@ -1150,14 +1186,12 @@ class CheckRMFrame(QWidget):
 
             trendline_after = np.polyval(coefficients_after, valid_sample_index)
 
-            # Use pyqtgraph
             layout_widget = pg.GraphicsLayoutWidget()
-            layout_widget.setBackground('w')  # Set background to white
+            layout_widget.setBackground('w')
             title_item = pg.LabelItem(f"Trend for {element} ({self.current_label})", size='12pt', bold=True)
             layout_widget.addItem(title_item, row=0, col=0)
             plot = layout_widget.addPlot(row=1, col=0)
 
-            # Plot data with descriptive legend names and different styles for lines with same color group
             plot.plot(valid_sample_index_no_outliers, valid_values_original_no_outliers, name=f"Original {element}", pen=pg.mkPen('b', width=2))
             plot.plot(valid_sample_index[outlier_mask], valid_values_original[outlier_mask], pen=None, symbol='o', symbolSize=8, symbolBrush='r', name="Outlier Points")
             plot.plot(valid_sample_index, trendline_before, name=f"Trend Before (slope={coefficients_before[0]:.3f})", pen=pg.mkPen('b', style=Qt.PenStyle.DashLine))
@@ -1170,7 +1204,7 @@ class CheckRMFrame(QWidget):
             y_max = max(np.max(valid_values_original), np.max(valid_values_corrected)) + 0.1 * (max(np.max(valid_values_original), np.max(valid_values_corrected)) - min(np.min(valid_values_original), np.min(valid_values_corrected)))
             plot.setXRange(valid_sample_index.min(), valid_sample_index.max())
             plot.setYRange(y_min, y_max)
-            plot.addLegend(offset=(10, 10))  # Ensure legend is displayed with explicit offset
+            plot.addLegend(offset=(10, 10))
 
             self.plot_layout.addWidget(layout_widget)
             logger.debug(f"Trend plot rendered for {element} in {self.current_label}")
@@ -1183,7 +1217,6 @@ class CheckRMFrame(QWidget):
         model = QStandardItemModel()
         model.setHorizontalHeaderLabels(["Solution Label", "Element", "Point", "Ratio"])
 
-        # Check if there are ratios for the given label and element
         for key, ratio in self.ratios.items():
             parts = key.split(':')
             if len(parts) != 3 or parts[0] != label or parts[1] != element:
@@ -1206,7 +1239,6 @@ class CheckRMFrame(QWidget):
         model = QStandardItemModel()
         model.setHorizontalHeaderLabels(["Solution Label", "Element", "Point", "Ratio"])
 
-        # Check if there are non-outlier ratios for the given label and element
         for key, ratio in self.non_outlier_ratios.items():
             parts = key.split(':')
             if len(parts) != 3 or parts[0] != label or parts[1] != element:
