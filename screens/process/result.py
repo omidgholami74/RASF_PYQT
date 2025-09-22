@@ -1,11 +1,10 @@
 import sys
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTableView,
-    QHeaderView, QScrollBar, QComboBox, QLineEdit, QDialog, QFileDialog, QMessageBox, QFrame,
-    QAbstractItemView, QGroupBox
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTableView,QAbstractItemView,
+    QHeaderView, QScrollBar, QComboBox, QLineEdit, QDialog, QFileDialog, QMessageBox, QGroupBox
 )
-from PyQt6.QtCore import Qt, QAbstractTableModel, QVariant
-from PyQt6.QtGui import QStandardItemModel, QStandardItem, QFont, QPen, QColor, QPainter
+from PyQt6.QtCore import Qt, QAbstractTableModel, QVariant, QTimer
+from PyQt6.QtGui import QStandardItemModel, QStandardItem, QFont
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
@@ -14,6 +13,10 @@ import time
 import numpy as np
 import os
 import platform
+import logging
+
+# Setup logging
+logger = logging.getLogger(__name__)
 
 # Global stylesheet for consistent UI
 global_style = """
@@ -147,7 +150,6 @@ class FreezeTableWidget(QTableView):
         self.frozenTableView.setModel(model)
         self.init()
 
-        # Connect signals for synchronized scrolling and resizing
         self.horizontalHeader().sectionResized.connect(self.updateSectionWidth)
         self.verticalHeader().sectionResized.connect(self.updateSectionHeight)
         self.frozenTableView.verticalScrollBar().valueChanged.connect(self.frozenVerticalScroll)
@@ -161,7 +163,6 @@ class FreezeTableWidget(QTableView):
         self.frozenTableView.setStyleSheet(global_style)
         self.frozenTableView.setSelectionModel(self.selectionModel())
         
-        # Hide all columns except the first one in the frozen table
         for col in range(self.model().columnCount()):
             self.frozenTableView.setColumnHidden(col, col != 0)
         self.frozenTableView.setColumnWidth(0, self.columnWidth(0))
@@ -227,7 +228,7 @@ class FilterDialog(QDialog):
     def __init__(self, parent, filter_values, filter_field, solution_label_order, element_order, update_callback):
         super().__init__(parent)
         self.setWindowTitle("Filter Pivot Table")
-        self.setFixedSize(300, 450)
+        self.setFixedSize(350, 500)
         self.filter_values = filter_values
         self.filter_field = filter_field
         self.solution_label_order = solution_label_order
@@ -238,12 +239,12 @@ class FilterDialog(QDialog):
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(10)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
 
-        # Filter field selection group
         filter_group = QGroupBox("Select Filter Column")
         filter_layout = QVBoxLayout(filter_group)
+        filter_layout.setSpacing(10)
         self.filter_combo = QComboBox()
         self.filter_combo.addItems(["Solution Label", "Element"])
         self.filter_combo.setCurrentText(self.filter_field)
@@ -252,18 +253,16 @@ class FilterDialog(QDialog):
         filter_layout.addWidget(self.filter_combo)
         layout.addWidget(filter_group)
 
-        # Filter values table
         self.filter_table = QTableView()
         self.filter_table.setSelectionMode(QTableView.SelectionMode.NoSelection)
         self.filter_table.setStyleSheet(global_style)
         self.filter_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.filter_table.setToolTip("Select values to include in the pivot table")
-        layout.addWidget(self.filter_table)
+        layout.addWidget(self.filter_table, stretch=1)
 
-        # Buttons group
         button_group = QGroupBox("Filter Actions")
         button_layout = QHBoxLayout(button_group)
-        button_layout.setSpacing(10)
+        button_layout.setSpacing(12)
 
         select_all_btn = QPushButton("Select All")
         select_all_btn.setToolTip("Select all filter values")
@@ -275,15 +274,16 @@ class FilterDialog(QDialog):
         deselect_all_btn.clicked.connect(lambda: self.set_all_checkboxes(False))
         button_layout.addWidget(deselect_all_btn)
 
-        apply_btn = QPushButton("Apply")
-        apply_btn.setToolTip("Apply the selected filters")
-        apply_btn.clicked.connect(self.accept)
-        button_layout.addWidget(apply_btn)
+        close_btn = QPushButton("Close")
+        close_btn.setToolTip("Close the filter window (changes are applied automatically)")
+        close_btn.clicked.connect(self.accept)
+        button_layout.addWidget(close_btn)
 
         layout.addWidget(button_group)
         self.update_checkboxes()
 
     def update_checkboxes(self):
+        start_time = time.time()
         field = self.filter_combo.currentText()
         model = QStandardItemModel()
         model.setHorizontalHeaderLabels(["Value", "Select"])
@@ -296,7 +296,7 @@ class FilterDialog(QDialog):
             self.filter_values[field] = {val: True for val in unique_values}
 
         for value in unique_values:
-            value_item = QStandardItem(value)
+            value_item = QStandardItem(str(value))
             value_item.setEditable(False)
             check_item = QStandardItem()
             check_item.setCheckable(True)
@@ -307,23 +307,27 @@ class FilterDialog(QDialog):
             model.appendRow([value_item, check_item])
 
         self.filter_table.setModel(model)
-        self.filter_table.setColumnWidth(0, 150)
-        self.filter_table.setColumnWidth(1, 80)
+        self.filter_table.setColumnWidth(0, 200)
+        self.filter_table.setColumnWidth(1, 100)
         model.itemChanged.connect(lambda item: self.toggle_filter(item, field))
+        logger.debug(f"Updated checkboxes for {field} in {time.time() - start_time:.3f} seconds")
 
     def toggle_filter(self, item, field):
         if item.column() == 1:
             value = self.filter_table.model().item(item.row(), 0).text()
             self.filter_values[field][value] = (item.checkState() == Qt.CheckState.Checked)
-            self.update_callback()
+            QTimer.singleShot(0, self.update_callback)
+            logger.debug(f"Toggled filter for {field}: {value} = {self.filter_values[field][value]}")
 
     def set_all_checkboxes(self, value):
+        start_time = time.time()
         field = self.filter_combo.currentText()
         if field in self.filter_values:
             for val in self.filter_values[field]:
                 self.filter_values[field][val] = value
             self.update_checkboxes()
-            self.update_callback()
+            QTimer.singleShot(0, self.update_callback)
+            logger.debug(f"Set all checkboxes for {field} to {value} in {time.time() - start_time:.3f} seconds")
 
 class ResultsFrame(QWidget):
     def __init__(self, app, parent=None):
@@ -340,60 +344,58 @@ class ResultsFrame(QWidget):
         self.solution_label_order = None
         self.element_order = None
         self.decimal_places = "1"
+        self.data_hash = None  # Track data changes
         self.setup_ui()
-        # Connect to app's data changed signal/callback
         self.app.notify_data_changed = self.show_processed_data
 
     def setup_ui(self):
         """Setup Results UI with pivot table, scrollbars, and decimal places selection"""
         start_time = time.time()
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
 
-        # Controls group
         controls_group = QGroupBox("Table Controls")
         controls_layout = QHBoxLayout(controls_group)
-        controls_layout.setSpacing(10)
+        controls_layout.setSpacing(12)
+        controls_layout.setContentsMargins(10, 10, 10, 10)
 
-        # Search button
-        search_button = QPushButton("Search")
+        search_button = QPushButton("🔍 Search")
         search_button.setToolTip("Search the pivot table")
         search_button.clicked.connect(self.open_search_window)
+        search_button.setFixedWidth(120)
         controls_layout.addWidget(search_button)
 
-        # Filter button
-        filter_button = QPushButton("Filter")
+        filter_button = QPushButton("📌 Filter")
         filter_button.setToolTip("Filter the pivot table by Solution Label or Element")
         filter_button.clicked.connect(self.open_filter_window)
+        filter_button.setFixedWidth(120)
         controls_layout.addWidget(filter_button)
 
-        # Save button
-        self.save_button = QPushButton("Save Processed Excel")
+        self.save_button = QPushButton("💾 Save Excel")
         self.save_button.setToolTip("Save the pivot table to an Excel file")
         self.save_button.clicked.connect(self.save_processed_excel)
+        self.save_button.setFixedWidth(120)
         controls_layout.addWidget(self.save_button)
 
-        # Decimal places selection
         decimal_label = QLabel("Decimal Places:")
+        decimal_label.setFont(QFont("Inter", 12))
         controls_layout.addWidget(decimal_label)
         self.decimal_combo = QComboBox()
         self.decimal_combo.addItems(["0", "1", "2", "3"])
         self.decimal_combo.setCurrentText(self.decimal_places)
         self.decimal_combo.setFixedWidth(60)
         self.decimal_combo.setToolTip("Set the number of decimal places for numeric values")
-        self.decimal_combo.currentTextChanged.connect(self.show_processed_data)
+        self.decimal_combo.currentTextChanged.connect(lambda: QTimer.singleShot(0, self.show_processed_data))
         controls_layout.addWidget(self.decimal_combo)
         controls_layout.addStretch()
 
         layout.addWidget(controls_group)
 
-        # Table group
         table_group = QGroupBox("Pivot Table")
         table_layout = QVBoxLayout(table_group)
         table_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Table view with frozen first column
         self.processed_table = FreezeTableWidget(PandasModel())
         self.processed_table.setStyleSheet(global_style)
         self.processed_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
@@ -406,7 +408,7 @@ class ResultsFrame(QWidget):
         layout.addWidget(table_group, stretch=1)
         self.setLayout(layout)
 
-        print(f"ResultsFrame UI setup took {time.time() - start_time:.3f} seconds")
+        logger.debug(f"ResultsFrame UI setup took {time.time() - start_time:.3f} seconds")
 
     def format_value(self, x):
         """Format a value to the specified number of decimal places"""
@@ -417,19 +419,26 @@ class ResultsFrame(QWidget):
             return str(x)
 
     def get_filtered_data(self):
-        """Get filtered pivot table data with caching"""
+        """Get filtered pivot table data with optimized caching"""
         start_time = time.time()
         df = self.app.get_data()
         if df is None or df.empty:
-            print("No data available in get_filtered_data")
+            logger.warning("No data available in get_filtered_data")
             return None
 
         required_columns = ['Solution Label', 'Element', 'Corr Con', 'Type']
         if not all(col in df.columns for col in required_columns):
+            logger.error(f"DataFrame missing required columns: {required_columns}")
             QMessageBox.warning(self, "Error", f"DataFrame missing required columns: {required_columns}")
             return None
 
-        df_filtered = df[df['Type'].isin(['Samp', 'Sample'])].copy()
+        # Calculate data hash to detect changes
+        new_hash = str(pd.util.hash_pandas_object(df[required_columns]).sum())
+        if new_hash == self.data_hash and self.last_filtered_data is not None:
+            logger.debug(f"Using cached data (same hash), took {time.time() - start_time:.3f} seconds")
+            return self.last_filtered_data
+
+        df_filtered = df[df['Type'].isin(['Samp', 'Sample', 'RM', 'Std'])].copy()
         df_filtered = df_filtered[
             (~df_filtered['Solution Label'].isin(self.app.get_excluded_samples())) &
             (~df_filtered['Solution Label'].isin(self.app.get_excluded_volumes())) &
@@ -437,22 +446,26 @@ class ResultsFrame(QWidget):
         ]
 
         if df_filtered.empty:
-            print("No data after filtering in get_filtered_data")
+            logger.warning("No data after filtering in get_filtered_data")
             return None
 
-        df_filtered['original_index'] = df_filtered.index
+        if 'original_index' not in df_filtered.columns:
+            df_filtered['original_index'] = df_filtered.index
         df_filtered['Element'] = df_filtered['Element'].str.split('_').str[0]
 
-        df_filtered['unique_id'] = df_filtered.groupby(['Solution Label', 'Element']).cumcount()
+        if 'row_id' in df_filtered.columns:
+            df_filtered['unique_id'] = df_filtered['row_id']
+        else:
+            df_filtered['unique_id'] = df_filtered.groupby(['Solution Label', 'Element']).cumcount()
 
-        if self.solution_label_order is None:
+        if self.solution_label_order is None or not self.solution_label_order:
             self.solution_label_order = df_filtered['Solution Label'].drop_duplicates().tolist()
-
-        if self.element_order is None:
+        if self.element_order is None or not self.element_order:
             self.element_order = df_filtered['Element'].drop_duplicates().tolist()
 
         value_column = 'Corr Con'
         if value_column not in df_filtered.columns:
+            logger.error(f"Column '{value_column}' not found in data")
             QMessageBox.warning(self, "Error", f"Column '{value_column}' not found in data!")
             return None
 
@@ -472,12 +485,18 @@ class ResultsFrame(QWidget):
         columns_to_keep = ['Solution Label'] + [col for col in self.element_order if col in pivot_data.columns]
         pivot_data = pivot_data[columns_to_keep]
 
-        search_text = self.search_var.lower()
+        search_text = self.search_var.lower().strip()
         filter_field = self.filter_field
-        selected_values = [k for k, v in self.filter_values.get(filter_field, {}).items() if v] if filter_field else []
+        selected_values = [k for k, v in self.filter_values.get(filter_field, {}).items() if v]
 
-        cache_key = (search_text, filter_field, tuple(sorted(selected_values)))
+        cache_key = (
+            search_text,
+            filter_field,
+            tuple(sorted(selected_values)),
+            new_hash
+        )
         if cache_key == self._last_cache_key and self.last_filtered_data is not None:
+            logger.debug(f"Using cached data, took {time.time() - start_time:.3f} seconds")
             return self.last_filtered_data
 
         if search_text:
@@ -488,12 +507,13 @@ class ResultsFrame(QWidget):
             if filter_field == 'Solution Label':
                 selected_order = [x for x in self.solution_label_order if x in selected_values and x in pivot_data['Solution Label'].values]
                 pivot_data = pivot_data[pivot_data['Solution Label'].isin(selected_values)]
-                pivot_data['Solution Label'] = pd.Categorical(
-                    pivot_data['Solution Label'],
-                    categories=selected_order,
-                    ordered=True
-                )
-                pivot_data = pivot_data.sort_values('Solution Label').reset_index(drop=True)
+                if not pivot_data.empty:
+                    pivot_data['Solution Label'] = pd.Categorical(
+                        pivot_data['Solution Label'],
+                        categories=selected_order,
+                        ordered=True
+                    )
+                    pivot_data = pivot_data.sort_values('Solution Label').reset_index(drop=True)
             elif filter_field == 'Element':
                 columns_to_keep = ['Solution Label'] + [col for col in self.element_order if col in selected_values and col in pivot_data.columns]
                 pivot_data = pivot_data[columns_to_keep]
@@ -501,6 +521,8 @@ class ResultsFrame(QWidget):
         pivot_data = pivot_data.drop_duplicates().reset_index(drop=True)
         self.last_filtered_data = pivot_data
         self._last_cache_key = cache_key
+        self.data_hash = new_hash
+        logger.debug(f"Get filtered data took {time.time() - start_time:.3f} seconds")
         return pivot_data
 
     def show_processed_data(self):
@@ -509,32 +531,29 @@ class ResultsFrame(QWidget):
         df = self.get_filtered_data()
         model = QStandardItemModel()
 
-        if df is None:
+        if df is None or df.empty:
             model.setHorizontalHeaderLabels(["Status"])
             model.appendRow([QStandardItem("No data loaded")])
             self.processed_table.setModel(model)
             self.processed_table.setColumnWidth(0, 150)
             self.column_widths = {"Status": 150}
-            print(f"Show processed data (no data) took {time.time() - start_time:.3f} seconds")
+            logger.debug(f"Show processed data (no data) took {time.time() - start_time:.3f} seconds")
             return
 
-        # Set headers
         columns = list(df.columns)
         model.setHorizontalHeaderLabels(columns)
         self.column_widths = {}
 
-        # Calculate column widths
         for col_idx, col in enumerate(columns):
             max_width = max(
-                [len(str(col))] + [len(self.format_value(x)) for x in df[col].dropna()],
+                [len(str(col))] + [len(self.format_value(x)) for x in df[col].dropna().head(100)],
                 default=10
             )
             pixel_width = min(max_width * 10, 150)
             self.column_widths[col] = pixel_width
             self.processed_table.setColumnWidth(col_idx, pixel_width)
 
-        # Populate table
-        for row_idx, row in df.iterrows():
+        for row in df.itertuples(index=False):
             items = [QStandardItem(self.format_value(x)) for x in row]
             for item in items:
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -544,10 +563,10 @@ class ResultsFrame(QWidget):
         self.processed_table.frozenTableView.setModel(model)
         self.processed_table.model().layoutChanged.emit()
         self.processed_table.frozenTableView.model().layoutChanged.emit()
-        print(f"Show processed pivot data took {time.time() - start_time:.3f} seconds")
+        logger.debug(f"Show processed pivot data took {time.time() - start_time:.3f} seconds")
 
     def open_search_window(self):
-        """Open a dialog for search input"""
+        """Open a dialog for search input with improved UI"""
         start_time = time.time()
         if self.app.get_data() is None:
             QMessageBox.warning(self, "Warning", "No data to search!")
@@ -558,34 +577,40 @@ class ResultsFrame(QWidget):
 
         self.search_window = QDialog(self)
         self.search_window.setWindowTitle("Search Pivot Table")
-        self.search_window.setFixedSize(300, 150)
+        self.search_window.setFixedSize(350, 200)
         self.search_window.setStyleSheet(global_style)
         layout = QVBoxLayout(self.search_window)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(10)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
 
-        layout.addWidget(QLabel("Search:"))
+        layout.addWidget(QLabel("Search in Pivot Table:", font=QFont("Inter", 12, QFont.Weight.Bold)))
         search_entry = QLineEdit()
+        search_entry.setPlaceholderText("Enter search term...")
         search_entry.setToolTip("Enter text to search in the pivot table")
         search_entry.textChanged.connect(lambda text: setattr(self, 'search_var', text))
+        search_entry.textChanged.connect(lambda: QTimer.singleShot(0, self.show_processed_data))
         layout.addWidget(search_entry)
 
-        search_btn = QPushButton("Search")
+        button_layout = QHBoxLayout()
+        search_btn = QPushButton("🔍 Search")
         search_btn.setToolTip("Perform the search")
         search_btn.clicked.connect(self.show_processed_data)
-        layout.addWidget(search_btn)
+        button_layout.addWidget(search_btn)
 
         close_btn = QPushButton("Close")
         close_btn.setToolTip("Close the search window")
         close_btn.clicked.connect(self.search_window.close)
-        layout.addWidget(close_btn)
+        button_layout.addWidget(close_btn)
+
+        layout.addLayout(button_layout)
+        layout.addStretch()
 
         self.search_window.show()
         search_entry.setFocus()
-        print(f"Open search window took {time.time() - start_time:.3f} seconds")
+        logger.debug(f"Open search window took {time.time() - start_time:.3f} seconds")
 
     def open_filter_window(self):
-        """Open a dialog to select filter values"""
+        """Open a dialog to select filter values with improved UI"""
         start_time = time.time()
         df = self.app.get_data()
         if df is None:
@@ -600,7 +625,7 @@ class ResultsFrame(QWidget):
         dialog.accepted.connect(self.show_processed_data)
         dialog.exec()
         self.filter_field = dialog.filter_combo.currentText()
-        print(f"Open filter window took {time.time() - start_time:.3f} seconds")
+        logger.debug(f"Open filter window took {time.time() - start_time:.3f} seconds")
 
     def save_processed_excel(self):
         """Save processed pivot table to Excel with styles"""
@@ -661,7 +686,7 @@ class ResultsFrame(QWidget):
 
                 wb.save(file_path)
                 QMessageBox.information(self, "Success", "Processed pivot table saved successfully!")
-                print(f"Save processed excel took {time.time() - start_time:.3f} seconds")
+                logger.debug(f"Save processed excel took {time.time() - start_time:.3f} seconds")
 
                 if QMessageBox.question(self, "Open File", "Would you like to open the saved Excel file?") == QMessageBox.StandardButton.Yes:
                     try:
@@ -672,13 +697,14 @@ class ResultsFrame(QWidget):
                             os.system(f"open {file_path}")
                         else:
                             os.system(f"xdg-open {file_path}")
-                        print(f"Opened file: {file_path}")
+                        logger.debug(f"Opened file: {file_path}")
                     except Exception as e:
                         QMessageBox.critical(self, "Error", f"Failed to open file: {str(e)}")
-                        print(f"Failed to open file: {str(e)}")
+                        logger.error(f"Failed to open file: {str(e)}")
 
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to save: {str(e)}")
+                logger.error(f"Failed to save: {str(e)}")
 
     def reset_cache(self):
         """Reset cached data, orders, filters, and search"""
@@ -689,4 +715,5 @@ class ResultsFrame(QWidget):
         self.column_widths = {}
         self.filter_values = {}
         self.search_var = ""
-        print("ResultsFrame cache, orders, filters, and search reset")
+        self.data_hash = None
+        logger.debug("ResultsFrame cache, orders, filters, and search reset")
