@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QLineEdit, QPushButton, QTableView, QHeaderView, QFileDialog, QMessageBox, QScrollArea, QComboBox, QGroupBox, QDialog
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QStandardItemModel, QStandardItem
+from PyQt6.QtGui import QStandardItemModel, QStandardItem, QColor
 import pandas as pd
 import math
 import logging
@@ -22,6 +22,7 @@ class CompareTab(QWidget):
         self.control_sheet = None
         self.file_path = None
         self.numeric_columns = []
+        self.non_numeric_columns = []
         self.headers = []
         self.magnitude_groups = {}  # Groups of columns by magnitude order
         self.group_weights = {}  # Textboxes for weights
@@ -343,32 +344,37 @@ class CompareTab(QWidget):
             avg_abs_values = {}
             self.magnitude_groups = {}
             self.column_weights = {}
+            self.non_numeric_columns = []
+            self.numeric_columns = []
             for col in common_columns:
                 sample_col = self.sample_col_map[col]
                 control_col = self.control_col_map[col]
                 sample_df[sample_col] = sample_df[sample_col].apply(self.convert_limit_values)
                 control_df[control_col] = control_df[control_col].apply(self.convert_limit_values)
-                sample_df[sample_col] = pd.to_numeric(sample_df[sample_col], errors='coerce')
-                control_df[control_col] = pd.to_numeric(control_df[control_col], errors='coerce')
+                numeric_sample = pd.to_numeric(sample_df[sample_col], errors='coerce')
+                numeric_control = pd.to_numeric(control_df[control_col], errors='coerce')
 
-                # Calculate average absolute value for the column
-                sample_abs_mean = sample_df[sample_col].abs().mean()
-                control_abs_mean = control_df[control_col].abs().mean()
+                sample_abs_mean = numeric_sample.abs().mean()
+                control_abs_mean = numeric_control.abs().mean()
                 avg_abs_value = (sample_abs_mean + control_abs_mean) / 2
-                avg_abs_values[col] = avg_abs_value if not pd.isna(avg_abs_value) else 0
-                logger.debug(f"Average absolute value for {col}: {avg_abs_value}")
+                avg_abs_values[col] = avg_abs_value if not pd.isna(avg_abs_value) else float('nan')
 
-                # Calculate order of magnitude
-                if avg_abs_value > 0:
-                    order_mag = math.floor(math.log10(avg_abs_value))
+                if pd.isna(avg_abs_value):
+                    self.non_numeric_columns.append(col)
                 else:
-                    order_mag = -math.inf
-                self.column_weights[col] = order_mag
-                if order_mag >= 1:
-                    if order_mag not in self.magnitude_groups:
-                        self.magnitude_groups[order_mag] = []
-                    self.magnitude_groups[order_mag].append(col)
-                logger.debug(f"Order of magnitude for {col}: {order_mag}")
+                    sample_df[sample_col] = numeric_sample
+                    control_df[control_col] = numeric_control
+                    self.numeric_columns.append(col)
+                    if avg_abs_value > 0:
+                        order_mag = math.floor(math.log10(avg_abs_value))
+                    else:
+                        order_mag = -math.inf
+                    self.column_weights[col] = order_mag
+                    if order_mag >= 1:
+                        if order_mag not in self.magnitude_groups:
+                            self.magnitude_groups[order_mag] = []
+                        self.magnitude_groups[order_mag].append(col)
+                    logger.debug(f"Order of magnitude for {col}: {order_mag}")
 
             # Sort groups by magnitude descending
             sorted_groups = sorted(self.magnitude_groups.keys(), reverse=True)
@@ -385,11 +391,10 @@ class CompareTab(QWidget):
 
             self.sample_df = sample_df
             self.control_df = control_df
-            self.numeric_columns = self.sorted_columns
-            self.headers = ["SAMPLE ID"] + self.sorted_columns
+            self.headers = ["SAMPLE ID"] + self.non_numeric_columns + self.sorted_columns
 
             self.create_group_inputs()
-            self.status_label.setText(f"Loaded: {self.sample_sheet} (Sample), {self.control_sheet} (Control), {len(self.sorted_columns)} columns")
+            self.status_label.setText(f"Loaded: {self.sample_sheet} (Sample), {self.control_sheet} (Control), {len(self.sorted_columns)} numeric columns, {len(self.non_numeric_columns)} non-numeric")
             self.status_label.setStyleSheet("color: #2e7d32; font: 13px 'Segoe UI'; background-color: #E8F5E9; padding: 10px; border-radius: 5px; border: 1px solid #A5D6A7;")
 
         except Exception as e:
@@ -453,7 +458,7 @@ class CompareTab(QWidget):
             return False
 
     def perform_comparison(self):
-        """Perform the comparison between sample and control data using weighted difference formula."""
+        """Perform the comparison between sample and control data."""
         logger.debug("Performing comparison")
         self.status_label.setText("Comparing...")
         self.status_label.setStyleSheet("color: #ff9800; font: 13px 'Segoe UI'; background-color: #FFF3E0; padding: 10px; border-radius: 5px; border: 1px solid #FFE082;")
@@ -469,20 +474,22 @@ class CompareTab(QWidget):
                     weights[col] = weight_val
 
             included_columns = self.sorted_columns
+            all_columns = self.non_numeric_columns + included_columns
+
             results = []
             self.match_data = []
             for _, sample_row in self.sample_df.iterrows():
                 sample_id = sample_row["SAMPLE ID"]
                 best_similarity = 0
                 best_control_id = None
-                best_control_row = None
                 best_column_diffs = {}
+                best_control_row = None
 
                 for _, control_row in self.control_df.iterrows():
                     control_id = control_row["SAMPLE ID"]
                     scores = []
                     column_diffs = {}
-                    total_weight = sum(weights[col] for col in included_columns)
+                    total_weight = sum(weights.get(col, 0) for col in included_columns)
 
                     for col in included_columns:
                         sample_val = sample_row[self.sample_col_map[col]]
@@ -501,7 +508,7 @@ class CompareTab(QWidget):
                         diff = abs(sample_val - control_val) / abs(control_val)
                         score = weights[col] * (1 / (1 + diff))
                         scores.append(score)
-                        column_diffs[col] = diff * 100  # Store as percentage
+                        column_diffs[col] = diff * 100
 
                     if total_weight > 0:
                         similarity = (sum(scores) / total_weight) * 100
@@ -526,19 +533,24 @@ class CompareTab(QWidget):
                         "Control ID": best_control_id,
                         "Similarity (%)": round(best_similarity, 2)
                     }
+                    for col in all_columns:
+                        match_row[f"Sample_{col}"] = sample_row[self.sample_col_map[col]]
+                        match_row[f"Control_{col}"] = best_control_row[self.control_col_map[col]]
                     for col in included_columns:
-                        sample_val = sample_row[self.sample_col_map[col]]
-                        control_val = best_control_row[self.control_col_map[col]]
-                        match_row[f"Sample_{col}"] = sample_val
-                        match_row[f"Control_{col}"] = control_val
-                        match_row[f"{col}_Difference"] = best_column_diffs.get(col)
+                        sample_val = match_row[f"Sample_{col}"]
+                        control_val = match_row[f"Control_{col}"]
+                        if not pd.isna(sample_val) and not pd.isna(control_val) and (sample_val + control_val) != 0:
+                            d = abs(sample_val - control_val) / (abs(sample_val) + abs(control_val)) * 100
+                            match_row[f"{col}_Difference"] = round(d, 1)
+                        else:
+                            match_row[f"{col}_Difference"] = None
                     self.match_data.append(match_row)
 
             # Sort results by similarity (descending)
             results.sort(key=lambda x: x["Similarity (%)"], reverse=True)
             self.match_data.sort(key=lambda x: x["Similarity (%)"], reverse=True)
 
-            self.show_results_dialog(results, included_columns)
+            self.show_results_dialog(self.match_data, all_columns, included_columns)
             self.status_label.setText("Comparison completed")
             self.status_label.setStyleSheet("color: #2e7d32; font: 13px 'Segoe UI'; background-color: #E8F5E9; padding: 10px; border-radius: 5px; border: 1px solid #A5D6A7;")
 
@@ -548,8 +560,8 @@ class CompareTab(QWidget):
             self.status_label.setStyleSheet("color: #d32f2f; font: 13px 'Segoe UI'; background-color: #FFEBEE; padding: 10px; border-radius: 5px; border: 1px solid #EF9A9A;")
             QMessageBox.critical(self, "Error", f"Comparison failed:\n{str(e)}")
 
-    def show_results_dialog(self, results, included_columns):
-        """Show comparison results in a new dialog with scrollable table."""
+    def show_results_dialog(self, match_data, all_columns, numeric_columns):
+        """Show comparison results in a new dialog with scrollable table in the new format."""
         dialog = QDialog(self)
         dialog.setWindowTitle("Comparison Results")
         dialog.setStyleSheet("""
@@ -584,21 +596,95 @@ class CompareTab(QWidget):
         header_label.setStyleSheet("font: bold 16px 'Segoe UI'; color: #2E7D32; margin-bottom: 10px;")
         layout.addWidget(header_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        columns = ["Sample ID", "Control ID", "Similarity (%)"]
+        columns = ["Type", "ID"] + all_columns
         model = QStandardItemModel()
         model.setHorizontalHeaderLabels(columns)
 
-        for idx, result in enumerate(results):
-            row = [
-                QStandardItem(str(result["Sample ID"])),
-                QStandardItem(str(result["Control ID"] or "")),
-                QStandardItem(f"{result['Similarity (%)']:.2f}"),
+        row_idx = 0
+        column_sums = {col: 0 for col in numeric_columns}
+        total_errors = []
+        num_matches = len(match_data)
+
+        for match in match_data:
+            # Sample row
+            sample_row_items = [
+                QStandardItem("Sample"),
+                QStandardItem(str(match["Sample ID"])),
             ]
-            for item in row:
+            for col in self.non_numeric_columns + numeric_columns:
+                val = match.get(f"Sample_{col}", "")
+                sample_row_items.append(QStandardItem(str(val) if not pd.isna(val) else ""))
+            for item in sample_row_items:
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                # Set background color for alternating rows
-                item.setBackground(Qt.GlobalColor.lightGray if idx % 2 else Qt.GlobalColor.white)
-            model.appendRow(row)
+                item.setBackground(QColor("#E8F5E9"))
+            model.appendRow(sample_row_items)
+            row_idx += 1
+
+            # Control row
+            control_row_items = [
+                QStandardItem("Control"),
+                QStandardItem(str(match["Control ID"])),
+            ]
+            for col in self.non_numeric_columns + numeric_columns:
+                val = match.get(f"Control_{col}", "")
+                control_row_items.append(QStandardItem(str(val) if not pd.isna(val) else ""))
+            for item in control_row_items:
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                item.setBackground(QColor("#E3F2FD"))
+            model.appendRow(control_row_items)
+            row_idx += 1
+
+            # d row
+            d_row_items = [
+                QStandardItem("d"),
+                QStandardItem(""),
+            ]
+            for col in self.non_numeric_columns:
+                d_row_items.append(QStandardItem(""))
+            for col in numeric_columns:
+                d = match.get(f"{col}_Difference")
+                d_str = f"{d:.1f}" if d is not None else ""
+                d_row_items.append(QStandardItem(d_str))
+                if d is not None:
+                    column_sums[col] += d
+                    total_errors.append(d)
+            for item in d_row_items:
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                item.setBackground(QColor("#FFEBEE"))
+            model.appendRow(d_row_items)
+            row_idx += 1
+
+            # Blank row
+            blank_row_items = [QStandardItem("") for _ in range(len(columns))]
+            for item in blank_row_items:
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                item.setBackground(QColor("#FFFFFF"))
+            model.appendRow(blank_row_items)
+            row_idx += 1
+
+        # Sum row
+        sum_row_items = [
+            QStandardItem("Sum d"),
+            QStandardItem(""),
+        ]
+        for col in self.non_numeric_columns:
+            sum_row_items.append(QStandardItem(""))
+        for col in numeric_columns:
+            sum_d = column_sums[col]
+            sum_row_items.append(QStandardItem(f"{sum_d:.1f}"))
+        for item in sum_row_items:
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item.setBackground(QColor("#F5F6F5"))
+        model.appendRow(sum_row_items)
+
+        # Average
+        if total_errors:
+            overall_avg = sum(total_errors) / len(total_errors)
+        else:
+            overall_avg = 0
+        avg_label = QLabel(f"Overall Average Error: {overall_avg:.1f}")
+        avg_label.setStyleSheet("font: bold 14px 'Segoe UI'; color: #D32F2F;")
+        layout.addWidget(avg_label)
 
         table = QTableView()
         table.setModel(model)
@@ -608,14 +694,13 @@ class CompareTab(QWidget):
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         table.verticalHeader().setVisible(False)
-        table.setSortingEnabled(True)
-        table.sortByColumn(2, Qt.SortOrder.DescendingOrder)
+        table.setSortingEnabled(False)
 
         layout.addWidget(table)
         dialog.exec()
 
     def export_report(self):
-        """Export comparison results and matching data to an Excel file, sorted by similarity."""
+        """Export comparison results to an Excel file in the new format."""
         logger.debug("Exporting comparison report")
         if not self.match_data:
             logger.error("No comparison data available")
@@ -634,57 +719,98 @@ class CompareTab(QWidget):
                 self.status_label.setStyleSheet("color: #6c757d; font: 13px 'Segoe UI'; background-color: #E3F2FD; padding: 10px; border-radius: 5px; border: 1px solid #BBDEFB;")
                 return
 
-            included_columns = self.sorted_columns
-            summary_data = []
-            for result in self.match_data:
-                row = {
-                    "Sample ID": result["Sample ID"],
-                    "Control ID": result["Control ID"],
-                    "Similarity (%)": result["Similarity (%)"]
-                }
-                summary_data.append(row)
-            summary_df = pd.DataFrame(summary_data)
+            with Workbook(output_path) as workbook:
+                worksheet = workbook.add_worksheet("Report")
 
-            details_data = []
-            for result in self.match_data:
-                row = {
-                    "Sample ID": result["Sample ID"],
-                    "Control ID": result["Control ID"],
-                    "Similarity (%)": result["Similarity (%)"]
-                }
-                for col in included_columns:
-                    row[f"Sample_{col}"] = result.get(f"Sample_{col}")
-                    row[f"Control_{col}"] = result.get(f"Control_{col}")
-                    row[f"{col}_Difference"] = result.get(f"{col}_Difference")
-                details_data.append(row)
-            details_df = pd.DataFrame(details_data)
+                # Formats
+                header_format = workbook.add_format({'bold': True, 'bg_color': '#D1E7DD', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+                sample_format = workbook.add_format({'bg_color': '#E8F5E9', 'border': 1, 'align': 'center'})
+                control_format = workbook.add_format({'bg_color': '#E3F2FD', 'border': 1, 'align': 'center'})
+                d_format = workbook.add_format({'bg_color': '#FFEBEE', 'border': 1, 'align': 'center'})
+                blank_format = workbook.add_format({'bg_color': '#FFFFFF', 'border': 1, 'align': 'center'})
+                sum_format = workbook.add_format({'bold': True, 'bg_color': '#F5F6F5', 'border': 1, 'align': 'center'})
+                number_format = workbook.add_format({'num_format': '0.0', 'bg_color': '#FFEBEE', 'border': 1, 'align': 'center'})
 
-            with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
-                summary_df.to_excel(writer, sheet_name="Summary", index=False)
-                details_df.to_excel(writer, sheet_name="Details", index=False)
+                # Write headers
+                headers = ["Type", "ID"] + self.non_numeric_columns + self.sorted_columns
+                for col_idx, header in enumerate(headers):
+                    worksheet.write(0, col_idx, header, header_format)
 
-                workbook = writer.book
-                worksheet_summary = writer.sheets["Summary"]
-                worksheet_details = writer.sheets["Details"]
-                header_format = workbook.add_format({
-                    'bold': True, 'bg_color': '#D1E7DD', 'border': 1, 'align': 'center', 'valign': 'vcenter'
-                })
-                cell_format = workbook.add_format({'border': 1, 'align': 'center'})
-                number_format = workbook.add_format({'border': 1, 'align': 'center', 'num_format': '0.00'})
+                row = 1
+                column_sums = {col: 0 for col in self.sorted_columns}
+                total_errors = []
 
-                for col_num, value in enumerate(summary_df.columns.values):
-                    worksheet_summary.write(0, col_num, value, header_format)
-                for col_num, value in enumerate(details_df.columns.values):
-                    worksheet_details.write(0, col_num, value, header_format)
+                for match in self.match_data:
+                    # Sample row
+                    worksheet.write(row, 0, "Sample", sample_format)
+                    worksheet.write(row, 1, match["Sample ID"], sample_format)
+                    col_idx = 2
+                    for col in self.non_numeric_columns + self.sorted_columns:
+                        val = match.get(f"Sample_{col}", "")
+                        format_to_use = sample_format if col in self.non_numeric_columns else sample_format
+                        if pd.isna(val):
+                            worksheet.write(row, col_idx, "", format_to_use)
+                        else:
+                            worksheet.write(row, col_idx, val, format_to_use)
+                        col_idx += 1
+                    row += 1
 
-                worksheet_summary.set_column(0, len(summary_df.columns) - 1, 15, cell_format)
-                worksheet_details.set_column(0, 0, 15, cell_format)
-                worksheet_details.set_column(1, 1, 15, cell_format)
-                worksheet_details.set_column(2, 2, 15, number_format)
-                col_idx = 3
-                for col in included_columns:
-                    worksheet_details.set_column(col_idx, col_idx + 2, 15, number_format)
-                    col_idx += 3
+                    # Control row
+                    worksheet.write(row, 0, "Control", control_format)
+                    worksheet.write(row, 1, match["Control ID"], control_format)
+                    col_idx = 2
+                    for col in self.non_numeric_columns + self.sorted_columns:
+                        val = match.get(f"Control_{col}", "")
+                        format_to_use = control_format if col in self.non_numeric_columns else control_format
+                        if pd.isna(val):
+                            worksheet.write(row, col_idx, "", format_to_use)
+                        else:
+                            worksheet.write(row, col_idx, val, format_to_use)
+                        col_idx += 1
+                    row += 1
+
+                    # d row
+                    worksheet.write(row, 0, "d", d_format)
+                    worksheet.write(row, 1, "", d_format)
+                    col_idx = 2
+                    for col in self.non_numeric_columns:
+                        worksheet.write(row, col_idx, "", d_format)
+                        col_idx += 1
+                    for col in self.sorted_columns:
+                        d = match.get(f"{col}_Difference")
+                        if d is not None:
+                            worksheet.write(row, col_idx, d, number_format)
+                            column_sums[col] += d
+                            total_errors.append(d)
+                        else:
+                            worksheet.write(row, col_idx, "", d_format)
+                        col_idx += 1
+                    row += 1
+
+                    # Blank row
+                    for col_idx in range(len(headers)):
+                        worksheet.write(row, col_idx, "", blank_format)
+                    row += 1
+
+                # Sum row
+                worksheet.write(row, 0, "Sum d", sum_format)
+                worksheet.write(row, 1, "", sum_format)
+                col_idx = 2
+                for col in self.non_numeric_columns:
+                    worksheet.write(row, col_idx, "", sum_format)
+                    col_idx += 1
+                for col in self.sorted_columns:
+                    sum_d = column_sums[col]
+                    worksheet.write(row, col_idx, sum_d, sum_format)
+                    col_idx += 1
+                row += 1
+
+                # Overall average
+                if total_errors:
+                    overall_avg = sum(total_errors) / len(total_errors)
+                else:
+                    overall_avg = 0
+                worksheet.write(row, 0, f"Overall Average Error: {overall_avg:.1f}", sum_format)
 
             self.status_label.setText(f"Report exported to {output_path.split('/')[-1]}")
             self.status_label.setStyleSheet("color: #2e7d32; font: 13px 'Segoe UI'; background-color: #E8F5E9; padding: 10px; border-radius: 5px; border: 1px solid #A5D6A7;")
