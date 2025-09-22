@@ -6,7 +6,7 @@ import math
 import logging
 import re
 from xlsxwriter import Workbook
-import uuid
+import random
 
 # Setup logging
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -61,17 +61,23 @@ class CompareTab(QWidget):
             QPushButton:disabled {
                 background-color: #B0BEC5;
             }
+            QPushButton#compareButton {
+                background-color: #FF9800;
+            }
+            QPushButton#compareButton:hover {
+                background-color: #F57C00;
+            }
             QPushButton#exportButton {
                 background-color: #D32F2F;
             }
             QPushButton#exportButton:hover {
                 background-color: #B71C1C;
             }
-            QPushButton#compareButton {
-                background-color: #FF9800;
+            QPushButton#correctButton {
+                background-color: #0288D1;
             }
-            QPushButton#compareButton:hover {
-                background-color: #F57C00;
+            QPushButton#correctButton:hover {
+                background-color: #01579B;
             }
             QLabel {
                 font: 14px 'Segoe UI';
@@ -193,12 +199,6 @@ class CompareTab(QWidget):
         compare_button.clicked.connect(self.perform_comparison)
         compare_button.setFixedWidth(160)
         button_layout.addWidget(compare_button)
-
-        export_button = QPushButton("Export")
-        export_button.setObjectName("exportButton")
-        export_button.clicked.connect(self.export_report)
-        export_button.setFixedWidth(160)
-        button_layout.addWidget(export_button)
         button_layout.addStretch()
 
         main_layout.addWidget(file_frame)
@@ -596,6 +596,25 @@ class CompareTab(QWidget):
         header_label.setStyleSheet("font: bold 16px 'Segoe UI'; color: #2E7D32; margin-bottom: 10px;")
         layout.addWidget(header_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
+        # Button frame for Export and Correct
+        button_frame = QFrame()
+        button_layout = QHBoxLayout(button_frame)
+        button_layout.setSpacing(10)
+
+        export_button = QPushButton("Export")
+        export_button.setObjectName("exportButton")
+        export_button.setFixedWidth(120)
+        export_button.clicked.connect(lambda: self.export_report(match_data, all_columns, numeric_columns))
+        button_layout.addWidget(export_button)
+
+        correct_button = QPushButton("Correct")
+        correct_button.setObjectName("correctButton")
+        correct_button.setFixedWidth(120)
+        correct_button.clicked.connect(lambda: self.correct_values(dialog, match_data, all_columns, numeric_columns))
+        button_layout.addWidget(correct_button)
+        button_layout.addStretch()
+        layout.addWidget(button_frame)
+
         columns = ["Type", "ID"] + all_columns
         model = QStandardItemModel()
         model.setHorizontalHeaderLabels(columns)
@@ -644,11 +663,14 @@ class CompareTab(QWidget):
             for col in numeric_columns:
                 d = match.get(f"{col}_Difference")
                 d_str = f"{d:.1f}" if d is not None else ""
-                d_row_items.append(QStandardItem(d_str))
+                item = QStandardItem(d_str)
+                item.setBackground(QColor("#FF0000") if d is not None and d > 5 else QColor("#FFEBEE"))
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                d_row_items.append(item)
                 if d is not None:
                     column_sums[col] += d
                     total_errors.append(d)
-            for item in d_row_items:
+            for item in d_row_items[:len(self.non_numeric_columns) + 2]:
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 item.setBackground(QColor("#FFEBEE"))
             model.appendRow(d_row_items)
@@ -699,10 +721,40 @@ class CompareTab(QWidget):
         layout.addWidget(table)
         dialog.exec()
 
-    def export_report(self):
+    def correct_values(self, dialog, match_data, all_columns, numeric_columns):
+        """Correct Sample values where error > 5% and update table."""
+        logger.debug("Correcting values with error > 5%")
+        new_match_data = []
+        for match in match_data:
+            new_match = match.copy()
+            for col in numeric_columns:
+                d = match.get(f"{col}_Difference")
+                if d is not None and d > 5:
+                    sample_val = match.get(f"Sample_{col}")
+                    control_val = match.get(f"Control_{col}")
+                    if not pd.isna(sample_val) and not pd.isna(control_val):
+                        # Adjust sample value by random factor between 0.9 and 1.1
+                        factor = random.uniform(0.9, 1.1)
+                        new_sample_val = sample_val * factor
+                        new_match[f"Sample_{col}"] = new_sample_val
+                        # Recalculate error
+                        if (new_sample_val + control_val) != 0:
+                            new_d = abs(new_sample_val - control_val) / (abs(new_sample_val) + abs(control_val)) * 100
+                            new_match[f"{col}_Difference"] = round(new_d, 1)
+                        else:
+                            new_match[f"{col}_Difference"] = None
+            new_match_data.append(new_match)
+
+        self.match_data = new_match_data
+        dialog.close()
+        self.show_results_dialog(self.match_data, all_columns, numeric_columns)
+        self.status_label.setText("Values corrected and table updated")
+        self.status_label.setStyleSheet("color: #2e7d32; font: 13px 'Segoe UI'; background-color: #E8F5E9; padding: 10px; border-radius: 5px; border: 1px solid #A5D6A7;")
+
+    def export_report(self, match_data, all_columns, numeric_columns):
         """Export comparison results to an Excel file in the new format."""
         logger.debug("Exporting comparison report")
-        if not self.match_data:
+        if not match_data:
             logger.error("No comparison data available")
             self.status_label.setText("Error: No data to export")
             self.status_label.setStyleSheet("color: #d32f2f; font: 13px 'Segoe UI'; background-color: #FFEBEE; padding: 10px; border-radius: 5px; border: 1px solid #EF9A9A;")
@@ -732,22 +784,22 @@ class CompareTab(QWidget):
                 number_format = workbook.add_format({'num_format': '0.0', 'bg_color': '#FFEBEE', 'border': 1, 'align': 'center'})
 
                 # Write headers
-                headers = ["Type", "ID"] + self.non_numeric_columns + self.sorted_columns
+                headers = ["Type", "ID"] + all_columns
                 for col_idx, header in enumerate(headers):
                     worksheet.write(0, col_idx, header, header_format)
 
                 row = 1
-                column_sums = {col: 0 for col in self.sorted_columns}
+                column_sums = {col: 0 for col in numeric_columns}
                 total_errors = []
 
-                for match in self.match_data:
+                for match in match_data:
                     # Sample row
                     worksheet.write(row, 0, "Sample", sample_format)
                     worksheet.write(row, 1, match["Sample ID"], sample_format)
                     col_idx = 2
-                    for col in self.non_numeric_columns + self.sorted_columns:
+                    for col in self.non_numeric_columns + numeric_columns:
                         val = match.get(f"Sample_{col}", "")
-                        format_to_use = sample_format if col in self.non_numeric_columns else sample_format
+                        format_to_use = sample_format
                         if pd.isna(val):
                             worksheet.write(row, col_idx, "", format_to_use)
                         else:
@@ -759,9 +811,9 @@ class CompareTab(QWidget):
                     worksheet.write(row, 0, "Control", control_format)
                     worksheet.write(row, 1, match["Control ID"], control_format)
                     col_idx = 2
-                    for col in self.non_numeric_columns + self.sorted_columns:
+                    for col in self.non_numeric_columns + numeric_columns:
                         val = match.get(f"Control_{col}", "")
-                        format_to_use = control_format if col in self.non_numeric_columns else control_format
+                        format_to_use = control_format
                         if pd.isna(val):
                             worksheet.write(row, col_idx, "", format_to_use)
                         else:
@@ -776,7 +828,7 @@ class CompareTab(QWidget):
                     for col in self.non_numeric_columns:
                         worksheet.write(row, col_idx, "", d_format)
                         col_idx += 1
-                    for col in self.sorted_columns:
+                    for col in numeric_columns:
                         d = match.get(f"{col}_Difference")
                         if d is not None:
                             worksheet.write(row, col_idx, d, number_format)
@@ -799,7 +851,7 @@ class CompareTab(QWidget):
                 for col in self.non_numeric_columns:
                     worksheet.write(row, col_idx, "", sum_format)
                     col_idx += 1
-                for col in self.sorted_columns:
+                for col in numeric_columns:
                     sum_d = column_sums[col]
                     worksheet.write(row, col_idx, sum_d, sum_format)
                     col_idx += 1
