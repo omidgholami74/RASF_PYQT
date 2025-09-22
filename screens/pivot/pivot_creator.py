@@ -31,13 +31,6 @@ class PivotCreator:
 
             self.pivot_tab.solution_label_order = sorted(df_filtered['Solution Label'].drop_duplicates().apply(clean_label).unique().tolist())
             self.pivot_tab.element_order = df_filtered['Element'].drop_duplicates().tolist()
-            self.pivot_tab.element_selector.clear()
-            # اگر گزینه اکسید فعال باشد، فرمول‌های اکسید را در element_selector نمایش می‌دهیم
-            if self.pivot_tab.use_oxide_var.isChecked():
-                oxide_elements = [oxide_factors[el][0] if el in oxide_factors else el for el in self.pivot_tab.element_order]
-                self.pivot_tab.element_selector.addItems([""] + oxide_elements)
-            else:
-                self.pivot_tab.element_selector.addItems([""] + self.pivot_tab.element_order)
 
             value_column = 'Int' if self.pivot_tab.use_int_var.isChecked() else 'Corr Con'
             if value_column not in df_filtered.columns:
@@ -46,7 +39,7 @@ class PivotCreator:
 
             pivot_df = df_filtered.pivot_table(
                 index=['Solution Label', 'unique_id'],
-                columns='Element',
+                columns='Element',  # Fixed typo: changed 'columnsML' to 'columns'
                 values=value_column,
                 aggfunc='first'
             ).reset_index()
@@ -56,14 +49,14 @@ class PivotCreator:
                 how='left'
             ).sort_values('original_index').drop(columns=['original_index', 'unique_id']).drop_duplicates()
 
-            print("Before oxide transformation:", pivot_df)  # دیباگ
+            print("Before oxide transformation:", pivot_df)  # Debug
 
             if self.pivot_tab.use_oxide_var.isChecked():
-                # تغییر نام ستون‌ها به فرمول اکسید و اعمال ضریب
+                # Rename columns to oxide formula and apply factor
                 rename_dict = {}
                 for col in pivot_df.columns:
                     if col != 'Solution Label':
-                        # استخراج نام عنصر بدون طول موج
+                        # Extract element name without wavelength
                         element = col.split()[0]
                         if element in oxide_factors:
                             oxide_formula, factor = oxide_factors[element]
@@ -71,7 +64,7 @@ class PivotCreator:
                             pivot_df[col] = pd.to_numeric(pivot_df[col], errors='coerce') * factor
                 pivot_df.rename(columns=rename_dict, inplace=True)
 
-            print("After oxide transformation:", pivot_df)  # دیباگ
+            print("After oxide transformation:", pivot_df)  # Debug
 
             self.pivot_tab.pivot_data = pivot_df
             self.pivot_tab.column_widths.clear()

@@ -10,23 +10,31 @@ from datetime import datetime
 
 class PivotPlotDialog(QDialog):
     """Dialog for plotting Verification data with PyQtGraph for professional plotting."""
-    def __init__(self, parent, selected_element, annotations):
+    def __init__(self, parent, annotations):
         super().__init__(parent)
         self.parent = parent
-        self.selected_element = selected_element
+        self.selected_element = ""
         self.annotations = annotations
-        self.setWindowTitle(f"Verification Plot for {selected_element}")
+        self.setWindowTitle("Verification Plot")
         self.setGeometry(100, 100, 1400, 900)
         self.setModal(False)
-        self.range_percent = 5  # Default 5%
+        self.range_percent = 5
         self.logger = logging.getLogger(__name__)
-        self.initial_ranges = {}  # To store initial axis ranges for reset
+        self.initial_ranges = {}
+        self.element_selector = QComboBox()
         self.setup_ui()
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
         
         control_frame = QHBoxLayout()
+        control_frame.addWidget(QLabel("Select Element:"))
+        if self.parent.pivot_data is not None:
+            columns = [col for col in self.parent.pivot_data.columns if col != 'Solution Label']
+            self.element_selector.addItems(columns)
+        self.element_selector.currentTextChanged.connect(self.update_plot)
+        control_frame.addWidget(self.element_selector)
+        
         self.show_check_crm = QCheckBox("Show Certificate Value", checked=True)
         self.show_check_crm.toggled.connect(self.update_plot)
         control_frame.addWidget(self.show_check_crm)
@@ -35,15 +43,10 @@ class PivotPlotDialog(QDialog):
         self.show_pivot_crm.toggled.connect(self.update_plot)
         control_frame.addWidget(self.show_pivot_crm)
         
-        self.show_middle = QCheckBox("Show Middle", checked=True)
-        self.show_middle.toggled.connect(self.update_plot)
-        control_frame.addWidget(self.show_middle)
-        
         self.show_range = QCheckBox("Show Acceptable Range", checked=True)
         self.show_range.toggled.connect(self.update_plot)
         control_frame.addWidget(self.show_range)
         
-        # Range percent selection
         control_frame.addWidget(QLabel("Acceptable Range (%):"))
         self.range_combo = QComboBox()
         self.range_combo.addItems(["5%", "10%"])
@@ -67,7 +70,6 @@ class PivotPlotDialog(QDialog):
         report_btn.clicked.connect(self.show_report)
         control_frame.addWidget(report_btn)
         
-        # Zoom buttons
         zoom_in_btn = QPushButton("Zoom In")
         zoom_in_btn.clicked.connect(self.zoom_in)
         control_frame.addWidget(zoom_in_btn)
@@ -82,16 +84,14 @@ class PivotPlotDialog(QDialog):
         
         layout.addLayout(control_frame)
         
-        # Main plot
         self.main_plot = pg.PlotWidget()
         self.main_plot.setMouseEnabled(x=True, y=True)
         self.main_plot.setMenuEnabled(True)
         self.main_plot.enableAutoRange(x=False, y=False)
         self.main_plot.setBackground('w')
-        self.legend = self.main_plot.addLegend(offset=(10, 10))  # Initialize legend once
+        self.legend = self.main_plot.addLegend(offset=(10, 10))
         layout.addWidget(self.main_plot)
         
-        # Connect mouse move for tooltips
         self.main_plot.scene().sigMouseMoved.connect(self.show_tooltip)
         
         self.update_plot()
@@ -113,7 +113,6 @@ class PivotPlotDialog(QDialog):
             return
         vb = plot.getViewBox()
         mouse_point = vb.mapSceneToView(pos)
-        # Remove existing tooltip text items
         for item in plot.items[:]:
             if isinstance(item, pg.TextItem):
                 plot.removeItem(item)
@@ -136,7 +135,6 @@ class PivotPlotDialog(QDialog):
         self.update_plot()
 
     def is_numeric(self, value):
-        """Check if a value can be converted to float."""
         try:
             float(value)
             return True
@@ -144,7 +142,6 @@ class PivotPlotDialog(QDialog):
             return False
 
     def format_number(self, value):
-        """Format number to display full value without scientific notation."""
         if not self.is_numeric(value):
             return str(value)
         num = float(value)
@@ -153,29 +150,26 @@ class PivotPlotDialog(QDialog):
         return f"{num:.4f}".rstrip('0').rstrip('.')
 
     def update_plot(self):
+        self.selected_element = self.element_selector.currentText()
         if not self.selected_element or self.selected_element not in self.parent.pivot_data.columns:
             self.logger.warning(f"Element '{self.selected_element}' not found in pivot data! Available columns: {list(self.parent.pivot_data.columns)}")
             QMessageBox.warning(self, "Warning", f"Element '{self.selected_element}' not found in pivot data! Available elements: {', '.join(self.parent.pivot_data.columns)}")
             return
 
         try:
-            # Clear the plot and legend completely
             self.main_plot.clear()
             self.legend.clear()
-            self.logger.debug("Legend cleared at the start of update_plot")
             self.annotations.clear()
-            added_legend_names = set()  # Track added legend names to ensure exactly four
+            added_legend_names = set()
 
             def extract_crm_id(label):
                 m = re.search(r'(?i)(?:CRM|par|OREAS)[\s-]*(\d+[a-zA-Z]?)', str(label))
-                return m.group(1) if m else str(label)  # Fallback to label if no ID found
+                return m.group(1) if m else str(label)
 
-            # Extract element name and wavelength
             element_name = self.selected_element.split()[0]
             wavelength = ' '.join(self.selected_element.split()[1:]) if len(self.selected_element.split()) > 1 else ""
-            analysis_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Current date and time
+            analysis_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            # Get calibration range from Std data
             std_data = self.parent.original_df[
                 (self.parent.original_df['Type'] == 'Std') & 
                 (self.parent.original_df['Element'] == self.selected_element)
@@ -184,13 +178,11 @@ class PivotPlotDialog(QDialog):
             calibration_max = float(std_data.max()) if not std_data.empty and self.is_numeric(std_data.max()) else 0
             calibration_range = f"[{self.format_number(calibration_min)} to {self.format_number(calibration_max)}]" if calibration_min != 0 or calibration_max != 0 else "[0 to 0]"
 
-            # Step 1: Collect blank rows
             blank_rows = self.parent.pivot_data[
                 self.parent.pivot_data['Solution Label'].str.contains(r'CRM\s*BLANK', case=False, na=False, regex=True)
             ]
             self.logger.debug(f"Blank rows: {blank_rows}")
 
-            # Step 2: Get the first blank row's value
             blank_val = 0
             blank_correction_status = "Not Applied"
             if not blank_rows.empty:
@@ -200,7 +192,6 @@ class PivotPlotDialog(QDialog):
                 blank_correction_status = "Applied"
             self.logger.debug(f"Selected Blank Value: {blank_val}")
 
-            # Get CRM labels
             crm_labels = [
                 label for label in self.parent._inline_crm_rows_display.keys()
                 if ('CRM' in label.upper() or 'par' in label.lower())
@@ -209,7 +200,6 @@ class PivotPlotDialog(QDialog):
             ]
             self.logger.debug(f"CRM labels: {crm_labels}")
 
-            # Group by verification ID
             crm_id_to_labels = {}
             for sol_label in crm_labels:
                 crm_id = extract_crm_id(sol_label)
@@ -217,7 +207,6 @@ class PivotPlotDialog(QDialog):
                     crm_id_to_labels[crm_id] = []
                 crm_id_to_labels[crm_id].append(sol_label)
 
-            # Prepare data for plotting
             unique_crm_ids = sorted(crm_id_to_labels.keys())
             x_pos_map = {crm_id: i for i, crm_id in enumerate(unique_crm_ids)}
             certificate_values = []
@@ -225,11 +214,8 @@ class PivotPlotDialog(QDialog):
             corrected_sample_values = []
             lower_bounds = []
             upper_bounds = []
-            middle_values = []
             soln_concs = []
             int_values = []
-            icp_recoveries = []
-            icp_statuses = []
             x_positions = []
 
             for crm_id in unique_crm_ids:
@@ -242,15 +228,13 @@ class PivotPlotDialog(QDialog):
                     pivot_val = pivot_row.iloc[0][self.selected_element]
                     self.logger.debug(f"Processing {sol_label}: pivot_val={pivot_val}, type={type(pivot_val)}")
                     
-                    # Validate pivot_val
                     if pd.isna(pivot_val) or pivot_val is None:
                         self.logger.warning(f"Invalid pivot value for {sol_label}: {pivot_val}")
-                        pivot_val = 0  # Default to 0 if invalid
+                        pivot_val = 0
                     elif not self.is_numeric(pivot_val):
                         self.logger.warning(f"Non-numeric pivot value for {sol_label}: {pivot_val}")
-                        pivot_val = 0  # Default to 0 if non-numeric
+                        pivot_val = 0
                     
-                    # Get Soln Conc and Int for this sample
                     sample_rows = self.parent.original_df[
                         (self.parent.original_df['Solution Label'] == sol_label) &
                         (self.parent.original_df['Element'].str.startswith(element_name)) &
@@ -259,14 +243,12 @@ class PivotPlotDialog(QDialog):
                     soln_conc = sample_rows['Soln Conc'].iloc[0] if not sample_rows.empty else '---'
                     int_val = sample_rows['Int'].iloc[0] if not sample_rows.empty else '---'
                     
-                    # Calculate RSD% (assuming multiple measurements are available)
                     int_values_list = sample_rows['Int'].dropna().astype(float).tolist()
                     rsd_percent = (np.std(int_values_list) / np.mean(int_values_list) * 100) if int_values_list and np.mean(int_values_list) != 0 else 0.0
                     
-                    # Assume Detection Limit (DL) for the element
-                    detection_limit = 0.2  # Placeholder
-                    crm_source = "NIST"  # Placeholder
-                    sample_matrix = "Soil"  # Placeholder
+                    detection_limit = 0.2
+                    crm_source = "NIST"
+                    sample_matrix = "Soil"
                     
                     for row_data, _ in self.parent._inline_crm_rows_display[sol_label]:
                         if isinstance(row_data, list) and row_data and row_data[0].endswith("CRM"):
@@ -288,10 +270,6 @@ class PivotPlotDialog(QDialog):
                                 annotation += f"\n  - Soln Conc: {soln_conc} out_range"
                                 annotation += f"\n  - Int: {int_val}"
                                 annotation += f"\n  - Calibration Range: {calibration_range} out_range"
-                                annotation += f"\n  - ICP Recovery: N/A"
-                                annotation += f"\n  - ICP Status: Out Range"
-                                annotation += f"\n  - ICP Detection Limit: {detection_limit}"
-                                annotation += f"\n  - ICP RSD%: {rsd_percent:.2f}%"
                                 annotation += f"\n  - CRM Source: {crm_source}"
                                 annotation += f"\n  - Sample Matrix: {sample_matrix}"
                                 annotation += f"\n  - Element Wavelength: {wavelength}"
@@ -303,12 +281,6 @@ class PivotPlotDialog(QDialog):
                             try:
                                 crm_val = float(val)
                                 pivot_val_float = float(pivot_val)
-                                # Calculate ICP Recovery
-                                icp_recovery = (pivot_val_float / crm_val * 100) if crm_val != 0 else 0
-                                in_icp_range = 90 <= icp_recovery <= 110
-                                icp_status = 'In Range' if in_icp_range else 'Out Range'
-                                
-                                # Acceptable range based on selected percent
                                 range_val = crm_val * (self.range_percent / 100)
                                 lower = crm_val - range_val
                                 upper = crm_val + range_val
@@ -359,10 +331,6 @@ class PivotPlotDialog(QDialog):
                                 annotation += f"\n  - Soln Conc: {soln_conc if isinstance(soln_conc, str) else self.format_number(soln_conc)} {'in_range' if in_calibration_range_soln else 'out_range'}"
                                 annotation += f"\n  - Int: {int_val if isinstance(int_val, str) else self.format_number(int_val)}"
                                 annotation += f"\n  - Calibration Range: {calibration_range} {'in_range' if in_calibration_range_soln else 'out_range'}"
-                                annotation += f"\n  - ICP Recovery: {icp_recovery:.2f}% {'in_range' if in_icp_range else 'out_range'}"
-                                annotation += f"\n  - ICP Status: {icp_status}"
-                                annotation += f"\n  - ICP Detection Limit: {self.format_number(detection_limit)}"
-                                annotation += f"\n  - ICP RSD%: {rsd_percent:.2f}%"
                                 annotation += f"\n  - CRM Source: {crm_source}"
                                 annotation += f"\n  - Sample Matrix: {sample_matrix}"
                                 annotation += f"\n  - Element Wavelength: {wavelength}"
@@ -370,18 +338,14 @@ class PivotPlotDialog(QDialog):
 
                                 self.annotations.append(annotation)
                                 
-                                # Add to plotting data
                                 x_positions.append(x_pos)
                                 certificate_values.append(crm_val)
                                 sample_values.append(pivot_val_float)
                                 corrected_sample_values.append(corrected_pivot)
                                 lower_bounds.append(lower)
                                 upper_bounds.append(upper)
-                                middle_values.append((crm_val + pivot_val_float) / 2)
                                 soln_concs.append(soln_conc)
                                 int_values.append(int_val)
-                                icp_recoveries.append(icp_recovery)
-                                icp_statuses.append(icp_status)
                             except ValueError as e:
                                 self.logger.error(f"ValueError in processing data for {sol_label}: {str(e)}")
                                 continue
@@ -393,12 +357,11 @@ class PivotPlotDialog(QDialog):
                 QMessageBox.warning(self, "Warning", f"No valid Verification data for {self.selected_element}. Please check data for CRM labels: {', '.join(crm_labels) if crm_labels else 'None'}")
                 return
 
-            # Set up main plot
             self.main_plot.setLabel('bottom', 'Verification ID')
             self.main_plot.setLabel('left', f'{self.selected_element} Value')
             self.main_plot.setTitle(f'Verification Values for {self.selected_element}')
             self.main_plot.getAxis('bottom').setTicks([[(i, f'V {id}') for i, id in enumerate(unique_crm_ids)]])
-            y_values = certificate_values + sample_values + corrected_sample_values + lower_bounds + upper_bounds + middle_values
+            y_values = certificate_values + sample_values + corrected_sample_values + lower_bounds + upper_bounds
             if y_values:
                 y_min, y_max = min(y_values), max(y_values)
                 margin = (y_max - y_min) * 0.1
@@ -407,8 +370,6 @@ class PivotPlotDialog(QDialog):
                 self.initial_ranges['main_x'] = (-0.5, len(unique_crm_ids) - 0.5)
                 self.initial_ranges['main_y'] = (y_min - margin, y_max + margin)
 
-            # Plot main chart and add exactly four legend items
-            # 1. Certificate Value (Red, Circle)
             if self.show_check_crm.isChecked() and x_positions and certificate_values:
                 scatter = pg.PlotDataItem(
                     x=x_positions, y=certificate_values, pen=None, symbol='o', symbolSize=8,
@@ -420,7 +381,6 @@ class PivotPlotDialog(QDialog):
                     added_legend_names.add('Certificate Value')
                     self.logger.debug("Added Certificate Value to legend")
 
-            # 2. Sample Value (Green, Triangle)
             if self.show_pivot_crm.isChecked() and x_positions and sample_values:
                 for i in range(len(x_positions)):
                     scatter = pg.PlotDataItem(
@@ -428,29 +388,15 @@ class PivotPlotDialog(QDialog):
                         symbolPen='g', symbolBrush='g'
                     )
                     self.main_plot.addItem(scatter)
-                # Add a single legend item for Sample Value
-                if 'Sample Value' not in added_legend_names:
+                if 'None' not in added_legend_names:
                     sample_scatter = pg.PlotDataItem(
                         x=[x_positions[0]], y=[sample_values[0]], pen=None, symbol='t', symbolSize=8,
-                        symbolPen='g', symbolBrush='g', name='Sample Value'
+                        symbolPen='g', symbolBrush='g', name='None'
                     )
-                    self.legend.addItem(sample_scatter, 'Sample Value')
-                    added_legend_names.add('Sample Value')
-                    self.logger.debug("Added Sample Value to legend")
+                    self.legend.addItem(sample_scatter, 'None')
+                    added_legend_names.add('None')
+                    self.logger.debug("Added None to legend")
 
-            # 3. Middle (Green, Square)
-            if self.show_middle.isChecked() and x_positions and middle_values:
-                scatter = pg.PlotDataItem(
-                    x=x_positions, y=middle_values, pen=None, symbol='s', symbolSize=6,
-                    symbolPen='g', symbolBrush='g', name='Middle'
-                )
-                self.main_plot.addItem(scatter)
-                if 'Middle' not in added_legend_names:
-                    self.legend.addItem(scatter, 'Middle')
-                    added_legend_names.add('Middle')
-                    self.logger.debug("Added Middle to legend")
-
-            # 4. Acceptable Range (Green Lines)
             if self.show_range.isChecked() and x_positions and lower_bounds and upper_bounds:
                 for i in range(len(x_positions)):
                     line_lower = pg.PlotDataItem(
@@ -463,7 +409,6 @@ class PivotPlotDialog(QDialog):
                     )
                     self.main_plot.addItem(line_lower)
                     self.main_plot.addItem(line_upper)
-                # Add a single legend item for Acceptable Range
                 if 'Acceptable Range' not in added_legend_names:
                     range_item = pg.PlotDataItem(
                         x=[x_positions[0] - 0.2, x_positions[0] + 0.2], y=[lower_bounds[0], lower_bounds[0]],
@@ -474,11 +419,8 @@ class PivotPlotDialog(QDialog):
                     self.logger.debug("Added Acceptable Range to legend")
 
             self.main_plot.showGrid(x=True, y=True, alpha=0.3)
-            # Verify exactly four legend items
             current_legend_items = [item[1].name() for item in self.legend.items if hasattr(item[1], 'name')]
             self.logger.debug(f"Legend items after update: {current_legend_items}")
-            if len(added_legend_names) != 4 or len(current_legend_items) != 4:
-                self.logger.warning(f"Expected exactly 4 legend items, but found {len(current_legend_items)}: {current_legend_items}")
 
         except Exception as e:
             self.main_plot.clear()

@@ -53,7 +53,7 @@ class FilterDialog(QDialog):
             return
 
         if self.is_row_filter:
-            field = 'Solution Label'  # Assuming row filter is on Solution Label
+            field = 'Solution Label'
             unique_values = sorted(self.parent.pivot_data[field].unique())
             filter_values = self.parent.row_filter_values.setdefault(field, {})
         else:
@@ -113,7 +113,6 @@ class PivotTab(QWidget):
         self.search_var = QLineEdit()
         self.row_filter_field = QComboBox()
         self.column_filter_field = QComboBox()
-        self.element_selector = QComboBox()
         self.decimal_places = QComboBox()
         self.use_int_var = QCheckBox("Use Int")
         self.use_oxide_var = QCheckBox("Use Oxide")
@@ -121,7 +120,6 @@ class PivotTab(QWidget):
         self.diff_max = QLineEdit("12")
         self.show_check_crm = QCheckBox("Show Check CRM", checked=True)
         self.show_pivot_crm = QCheckBox("Show Pivot CRM", checked=True)
-        self.show_middle = QCheckBox("Show Middle", checked=True)
         self.show_diff = QCheckBox("Show Diff", checked=True)
         self.show_range = QCheckBox("Show Range", checked=True)
         self.max_correction_percent = QLineEdit("32")
@@ -132,6 +130,7 @@ class PivotTab(QWidget):
         self.setup_ui()
 
     def setup_ui(self):
+        self.logger.debug("Setting up PivotTab UI")
         layout = QVBoxLayout(self)
         control_frame = QFrame()
         control_layout = QHBoxLayout(control_frame)
@@ -154,10 +153,6 @@ class PivotTab(QWidget):
         control_layout.addWidget(QLabel("to"))
         self.diff_max.textChanged.connect(self.validate_diff_range)
         control_layout.addWidget(self.diff_max)
-        
-        control_layout.addWidget(QLabel("Select Element:"))
-        self.element_selector.currentTextChanged.connect(self.show_element_plot)
-        control_layout.addWidget(self.element_selector)
         
         plot_btn = QPushButton("Show Plot")
         plot_btn.clicked.connect(self.show_element_plot)
@@ -203,11 +198,11 @@ class PivotTab(QWidget):
         layout.addWidget(self.status_label)
 
     def is_numeric(self, value):
-            try:
-                float(value)
-                return True
-            except (ValueError, TypeError):
-                return False
+        try:
+            float(value)
+            return True
+        except (ValueError, TypeError):
+            return False
 
     def format_value(self, x):
         try:
@@ -215,6 +210,7 @@ class PivotTab(QWidget):
             return f"{float(x):.{d}f}"
         except (ValueError, TypeError):
             return "" if pd.isna(x) or x is None else str(x)
+
     def validate_diff_range(self):
         try:
             min_val = float(self.diff_min.text())
@@ -226,14 +222,16 @@ class PivotTab(QWidget):
             pass
 
     def update_pivot_display(self):
+        self.logger.debug("Updating pivot display")
         if self.pivot_data is None or self.pivot_data.empty:
+            self.logger.warning("No data loaded for pivot display")
             self.status_label.setText("No data loaded")
             self.table_view.setModel(None)
             self.table_view.frozenTableView.setModel(None)
             return
 
         df = self.pivot_data.copy()
-        print("Pivot data in update_pivot_display:", df)  # Debug
+        self.logger.debug(f"Pivot data:\n{df}")
 
         s = self.search_var.text().strip().lower()
         if s:
@@ -266,11 +264,11 @@ class PivotTab(QWidget):
 
         df = df.reset_index(drop=True)
         self.current_view_df = df
-        print("Current view data:", df)  # Debug
+        self.logger.debug(f"Current view data:\n{df}")
 
-        # Rebuild CRM display for current columns without losing original CRM data
+        # Rebuild CRM display for current columns
         self._inline_crm_rows_display = self.crm_manager._build_crm_row_lists_for_columns(list(df.columns))
-        print("CRM rows display:", self._inline_crm_rows_display)  # Debug
+        self.logger.debug(f"CRM rows display: {self._inline_crm_rows_display}")
 
         crm_rows = []
         for sol_label in df['Solution Label']:
@@ -286,7 +284,7 @@ class PivotTab(QWidget):
             if col < len(df.columns):
                 self.table_view.horizontalHeader().resizeSection(col, width)
         self.status_label.setText("Data loaded successfully")
-        self.table_view.viewport().update()  # Manual UI refresh
+        self.table_view.viewport().update()
 
     def calculate_dynamic_range(self, value):
         try:
@@ -301,6 +299,7 @@ class PivotTab(QWidget):
             return 0
 
     def on_cell_double_click(self, index):
+        self.logger.debug(f"Cell double-clicked at row {index.row()}, col {index.column()}")
         if not index.isValid() or self.current_view_df is None:
             return
         row = index.row()
@@ -371,14 +370,8 @@ class PivotTab(QWidget):
             self.logger.error(f"Failed to display cell info: {str(e)}")
             QMessageBox.warning(self, "Error", f"Failed to display cell info: {str(e)}")
 
-    def format_value(self, x):
-        try:
-            d = int(self.decimal_places.currentText())
-            return f"{float(x):.{d}f}"
-        except (ValueError, TypeError):
-            return "" if pd.isna(x) else str(x)
-
     def open_row_filter_window(self):
+        self.logger.debug("Opening row filter window")
         if self.pivot_data is None:
             QMessageBox.warning(self, "Warning", "No data to filter!")
             return
@@ -386,6 +379,7 @@ class PivotTab(QWidget):
         dialog.exec()
 
     def open_column_filter_window(self):
+        self.logger.debug("Opening column filter window")
         if self.pivot_data is None:
             QMessageBox.warning(self, "Warning", "No data to filter!")
             return
@@ -393,6 +387,7 @@ class PivotTab(QWidget):
         dialog.exec()
 
     def reset_cache(self):
+        self.logger.debug("Resetting PivotTab cache")
         self.pivot_data = None
         self.solution_label_order = None
         self.element_order = None
@@ -403,49 +398,74 @@ class PivotTab(QWidget):
         self._inline_crm_rows_display.clear()
         self.row_filter_values.clear()
         self.column_filter_values.clear()
+        if self.current_plot_dialog:
+            self.logger.debug("Closing existing plot dialog")
+            self.current_plot_dialog.close()
+            self.current_plot_dialog = None
+        self.update_pivot_display()
 
     def clear_inline_crm(self):
+        self.logger.debug("Clearing inline CRM data")
         self._inline_crm_rows.clear()
         self._inline_crm_rows_display.clear()
         self.included_crms.clear()
         self.update_pivot_display()
 
     def show_element_plot(self):
-        selected_element = self.element_selector.currentText()
-        if not selected_element:
+        self.logger.debug("Attempting to show element plot")
+        if self.pivot_data is None or self.pivot_data.empty:
+            self.logger.warning("No data to plot")
+            QMessageBox.warning(self, "Warning", "No data to plot!")
             return
+        self.logger.debug("Opening element plot dialog")
         if self.current_plot_dialog:
             self.current_plot_dialog.close()
         annotations = []
-        self.current_plot_dialog = PivotPlotDialog(self, selected_element, annotations)
+        self.current_plot_dialog = PivotPlotDialog(self, annotations)
         self.current_plot_dialog.show()
 
     def correct_pivot_crm(self):
+        self.logger.debug("Attempting to correct pivot CRM")
         if self.pivot_data is None or self.pivot_data.empty:
+            self.logger.warning("No pivot data available for correction")
             QMessageBox.warning(self, "Warning", "No pivot data available!")
             return
 
-        selected_element = self.element_selector.currentText()
-        if not selected_element:
-            QMessageBox.warning(self, "Warning", "Please select an element!")
+        if not self.current_plot_dialog or not self.current_plot_dialog.isVisible():
+            self.logger.warning("Plot dialog not open or not visible for element selection")
+            QMessageBox.warning(self, "Warning", "Please open the plot window first!")
+            return
+
+        if self.current_plot_dialog and self.current_plot_dialog.isVisible():
+            selected_element = self.current_plot_dialog.element_selector.currentText()
+        else:
+            raise AttributeError("Plot dialog not open")
+        if not selected_element or selected_element not in self.pivot_data.columns:
+            available_elements = [col for col in self.pivot_data.columns if col != 'Solution Label']
+            self.logger.warning(f"Invalid element selected: {selected_element}. Available elements: {available_elements}")
+            QMessageBox.warning(self, "Warning", f"Please select a valid element! Available elements: {', '.join(available_elements)}")
             return
 
         try:
             max_corr = float(self.max_correction_percent.text()) / 100
         except ValueError:
+            self.logger.warning("Invalid max correction percent entered")
             QMessageBox.warning(self, "Warning", "Invalid max correction percent!")
             return
 
         try:
+            self.logger.debug(f"Correcting pivot CRM for element: {selected_element}")
             self.pivot_data[selected_element] = pd.to_numeric(self.pivot_data[selected_element], errors='coerce')
             ratios = []
             problematic_labels = []
 
             for sol_label, crm_rows in self._inline_crm_rows_display.items():
                 if sol_label not in self.included_crms or not self.included_crms[sol_label].isChecked():
+                    self.logger.debug(f"Skipping {sol_label}: not included or not checked")
                     continue
                 pivot_row = self.pivot_data[self.pivot_data['Solution Label'] == sol_label]
                 if pivot_row.empty:
+                    self.logger.warning(f"No pivot data for solution label: {sol_label}")
                     continue
                 pivot_val = pivot_row.iloc[0][selected_element]
                 for row_data, _ in crm_rows:
@@ -464,23 +484,30 @@ class PivotTab(QWidget):
                                     if correction <= max_corr:
                                         ratios.append(ratio)
                                         self.pivot_data.loc[self.pivot_data['Solution Label'] == sol_label, selected_element] = pivot_val_float * ratio
+                                        self.logger.debug(f"Applied correction for {sol_label}: ratio={ratio}")
                                     else:
                                         problematic_labels.append(sol_label)
+                                        self.logger.debug(f"Correction for {sol_label} exceeds max: {correction}")
                                 elif pivot_val_float > upper:
                                     ratio = upper / pivot_val_float if pivot_val_float != 0 else float('inf')
                                     correction = abs(ratio - 1)
                                     if correction <= max_corr:
                                         ratios.append(ratio)
                                         self.pivot_data.loc[self.pivot_data['Solution Label'] == sol_label, selected_element] = pivot_val_float * ratio
+                                        self.logger.debug(f"Applied correction for {sol_label}: ratio={ratio}")
                                     else:
                                         problematic_labels.append(sol_label)
+                                        self.logger.debug(f"Correction for {sol_label} exceeds max: {correction}")
                             except ValueError:
+                                self.logger.warning(f"Invalid CRM value for {sol_label}: {val}")
                                 continue
 
             if problematic_labels:
+                self.logger.warning(f"CRM correction issues for labels: {problematic_labels}")
                 QMessageBox.warning(self, "Warning", f"CRM has problem in these points (correction exceeds max):\n" + "\n".join(problematic_labels))
 
             if not ratios:
+                self.logger.warning("No valid ratios for correction")
                 QMessageBox.warning(self, "Warning", "No valid ratios for correction!")
                 return
 
@@ -488,10 +515,13 @@ class PivotTab(QWidget):
             self.pivot_data[selected_element] = self.pivot_data[selected_element].apply(
                 lambda x: x * avg_ratio if pd.notna(x) else x
             )
+            self.logger.debug(f"Applied average correction ratio: {avg_ratio}")
             self.update_pivot_display()
             if self.current_plot_dialog and self.current_plot_dialog.isVisible():
                 self.current_plot_dialog.update_plot()
+            self.logger.info(f"Pivot CRM corrected for {selected_element} with average ratio={avg_ratio:.3f}")
             QMessageBox.information(self, "Success", f"Pivot CRM corrected for {selected_element} with average ratio={avg_ratio:.3f}")
 
         except Exception as e:
+            self.logger.error(f"Failed to correct Pivot CRM: {str(e)}")
             QMessageBox.warning(self, "Error", f"Failed to correct Pivot CRM: {str(e)}")

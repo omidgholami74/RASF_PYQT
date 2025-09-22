@@ -4,12 +4,13 @@ import os
 import logging
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 from screens.pivot.pivot_creator import PivotCreator
+
 # Setup logging
 logger = logging.getLogger(__name__)
 
 def load_excel(app):
     """Load and parse Excel/CSV file, update UI via MainTabContent, and return DataFrame and file path"""
-    logger.debug("Loading Excel/CSV file")
+    logger.debug("Starting load_excel")
     file_path, _ = QFileDialog.getOpenFileName(
         app,
         "Open File",
@@ -18,11 +19,13 @@ def load_excel(app):
     )
     
     if not file_path:
+        logger.debug("No file selected")
         app.file_path_label.setText("File Path: No file selected")
         app.setWindowTitle("RASF Data Processor")
         return None
         
     try:
+        logger.debug(f"Selected file: {file_path}")
         app.file_path_label.setText(f"File Path: {file_path}")
         
         is_new_format = False
@@ -185,20 +188,28 @@ def load_excel(app):
         app.data = df
         app.file_path = file_path
         
+        # Reset pivot tab cache to avoid stale dialog references
+        if hasattr(app, 'pivot_tab') and app.pivot_tab:
+            logger.debug("Resetting PivotTab cache before any updates")
+            app.pivot_tab.reset_cache()
+        
         # Update UI via MainTabContent
         if hasattr(app, 'main_content'):
+            logger.debug("Updating MainTabContent")
             # Update Elements tab
             if hasattr(app, 'elements_tab') and app.elements_tab:
+                logger.debug("Processing elements tab")
                 app.elements_tab.process_blk_elements()
             else:
                 if hasattr(app, 'elements_tab'):
+                    logger.debug("Displaying default elements")
                     app.elements_tab.display_elements(["Cu", "Zn", "Fe"])
             
             # Trigger pivot tab updates
             if "pivot" in app.main_content.tab_subtab_map:
                 pivot_subtabs = app.main_content.tab_subtab_map["pivot"]["widgets"]
                 if "Display" in pivot_subtabs:
-                    # Ensure pivot_tab is reset and updated
+                    logger.debug("Creating pivot table")
                     pivot_creator = PivotCreator(app.pivot_tab)
                     pivot_creator.create_pivot()
             
@@ -206,6 +217,7 @@ def load_excel(app):
             if "CRM" in app.main_content.tab_subtab_map:
                 crm_subtabs = app.main_content.tab_subtab_map["CRM"]["widgets"]
                 if "CRM" in crm_subtabs:
+                    logger.debug("Updating CRM tab")
                     if hasattr(app.crm_tab, 'reset_cache'):
                         app.main_content.switch_subtab("CRM", "CRM")  # Show CRM tab
                         app.crm_tab.reset_cache()
@@ -216,6 +228,7 @@ def load_excel(app):
             if "Process" in app.main_content.tab_subtab_map:
                 process_subtabs = app.main_content.tab_subtab_map["Process"]["widgets"]
                 if "Result" in process_subtabs:
+                    logger.debug("Updating Process tab")
                     if hasattr(app.results, 'reset_cache'):
                         app.main_content.switch_subtab("Result", "Process")  # Show ResultsFrame
                         app.results.reset_cache()
@@ -224,8 +237,10 @@ def load_excel(app):
         
         # Switch to Calibration tab
         if hasattr(app, 'main_content'):
+            logger.debug("Switching to Elements tab")
             app.main_content.switch_tab("Elements")
         
+        logger.info("File loaded successfully")
         QMessageBox.information(app, "Success", "File loaded successfully!")
         return df, file_path
         
