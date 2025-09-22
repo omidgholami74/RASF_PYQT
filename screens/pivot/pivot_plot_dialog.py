@@ -170,13 +170,60 @@ class PivotPlotDialog(QDialog):
             wavelength = ' '.join(self.selected_element.split()[1:]) if len(self.selected_element.split()) > 1 else ""
             analysis_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+            # Calculate calibration range from standards
             std_data = self.parent.original_df[
                 (self.parent.original_df['Type'] == 'Std') & 
                 (self.parent.original_df['Element'] == self.selected_element)
             ]['Soln Conc']
-            calibration_min = float(std_data.min()) if not std_data.empty and self.is_numeric(std_data.min()) else 0
-            calibration_max = float(std_data.max()) if not std_data.empty and self.is_numeric(std_data.max()) else 0
-            calibration_range = f"[{self.format_number(calibration_min)} to {self.format_number(calibration_max)}]" if calibration_min != 0 or calibration_max != 0 else "[0 to 0]"
+            self.logger.debug(f"Raw Std data for {self.selected_element}: {std_data.tolist()}")
+            # Filter and convert to floats
+            std_data_numeric = []
+            for x in std_data:
+                if self.is_numeric(x):
+                    try:
+                        std_data_numeric.append(float(x))
+                    except (ValueError, TypeError) as e:
+                        self.logger.warning(f"Failed to convert Std value '{x}' to float: {str(e)}")
+            self.logger.debug(f"Numeric Std data for {self.selected_element}: {std_data_numeric}")
+            if not std_data_numeric:
+                self.logger.warning(f"No valid numeric Std data for element: {self.selected_element}")
+                calibration_min = 0
+                calibration_max = 0
+                calibration_range = "[0 to 0]"
+            else:
+                calibration_min = min(std_data_numeric)
+                calibration_max = max(std_data_numeric)
+                calibration_range = f"[{self.format_number(calibration_min)} to {self.format_number(calibration_max)}]"
+
+            # Calculate Soln Conc range for samples
+            sample_data = self.parent.original_df[
+                (self.parent.original_df['Type'].isin(['Samp', 'Sample'])) &
+                (self.parent.original_df['Element'] == self.selected_element)
+            ]['Soln Conc']
+            self.logger.debug(f"Raw Sample data for {self.selected_element}: {sample_data.tolist()}")
+            # Filter and convert to floats
+            sample_data_numeric = []
+            for x in sample_data:
+                if self.is_numeric(x):
+                    try:
+                        sample_data_numeric.append(float(x))
+                    except (ValueError, TypeError) as e:
+                        self.logger.warning(f"Failed to convert Sample value '{x}' to float: {str(e)}")
+            self.logger.debug(f"Numeric Sample data for {self.selected_element}: {sample_data_numeric}")
+            if not sample_data_numeric:
+                self.logger.warning(f"No valid numeric Sample data for element: {self.selected_element}")
+                soln_conc_min = '---'
+                soln_conc_max = '---'
+                soln_conc_range = '---'
+                in_calibration_range_soln = False
+            else:
+                soln_conc_min = min(sample_data_numeric)
+                soln_conc_max = max(sample_data_numeric)
+                soln_conc_range = f"[{self.format_number(soln_conc_min)} to {self.format_number(soln_conc_max)}]"
+                in_calibration_range_soln = (
+                    calibration_min <= soln_conc_min <= calibration_max and
+                    calibration_min <= soln_conc_max <= calibration_max
+                ) if calibration_min != 0 or calibration_max != 0 else False
 
             blank_rows = self.parent.pivot_data[
                 self.parent.pivot_data['Solution Label'].str.contains(r'CRM\s*BLANK', case=False, na=False, regex=True)
@@ -235,11 +282,16 @@ class PivotPlotDialog(QDialog):
                         self.logger.warning(f"Non-numeric pivot value for {sol_label}: {pivot_val}")
                         pivot_val = 0
                     
+                    # Get Soln Conc and Int for the specific sol_label
                     sample_rows = self.parent.original_df[
                         (self.parent.original_df['Solution Label'] == sol_label) &
                         (self.parent.original_df['Element'].str.startswith(element_name)) &
                         (self.parent.original_df['Type'].isin(['Samp', 'Sample']))
                     ]
+                    if sample_rows.empty:
+                        self.logger.warning(f"No sample rows found for Solution Label: {sol_label}, Element: {element_name}")
+                    else:
+                        self.logger.debug(f"Sample rows for {sol_label}: {sample_rows[['Solution Label', 'Element', 'Soln Conc', 'Int']].to_dict('records')}")
                     soln_conc = sample_rows['Soln Conc'].iloc[0] if not sample_rows.empty else '---'
                     int_val = sample_rows['Int'].iloc[0] if not sample_rows.empty else '---'
                     
@@ -267,9 +319,9 @@ class PivotPlotDialog(QDialog):
                                 annotation += f"\n  - Sample Value - Blank: {self.format_number(pivot_val)}"
                                 annotation += f"\n  - Corrected Range: [N/A]"
                                 annotation += f"\n  - Status after Blank Subtraction: Out of range (non-numeric data)."
-                                annotation += f"\n  - Soln Conc: {soln_conc} out_range"
-                                annotation += f"\n  - Int: {int_val}"
-                                annotation += f"\n  - Calibration Range: {calibration_range} out_range"
+                                annotation += f"\n  - Soln Conc: {soln_conc if isinstance(soln_conc, str) else self.format_number(soln_conc)} {'in_range' if in_calibration_range_soln else 'out_range'}"
+                                annotation += f"\n  - Int: {int_val if isinstance(int_val, str) else self.format_number(int_val)}"
+                                annotation += f"\n  - Calibration Range: {calibration_range} {'in_range' if in_calibration_range_soln else 'out_range'}"
                                 annotation += f"\n  - CRM Source: {crm_source}"
                                 annotation += f"\n  - Sample Matrix: {sample_matrix}"
                                 annotation += f"\n  - Element Wavelength: {wavelength}"
@@ -327,7 +379,6 @@ class PivotPlotDialog(QDialog):
                                         else:
                                             annotation += f"\n  - Scaling not applicable (corrected sample value is zero)."
                                 
-                                in_calibration_range_soln = calibration_min <= float(soln_conc) <= calibration_max if self.is_numeric(soln_conc) and (calibration_min != 0 or calibration_max != 0) else False
                                 annotation += f"\n  - Soln Conc: {soln_conc if isinstance(soln_conc, str) else self.format_number(soln_conc)} {'in_range' if in_calibration_range_soln else 'out_range'}"
                                 annotation += f"\n  - Int: {int_val if isinstance(int_val, str) else self.format_number(int_val)}"
                                 annotation += f"\n  - Calibration Range: {calibration_range} {'in_range' if in_calibration_range_soln else 'out_range'}"
