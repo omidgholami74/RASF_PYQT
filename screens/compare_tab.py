@@ -540,7 +540,7 @@ class CompareTab(QWidget):
                         sample_val = match_row[f"Sample_{col}"]
                         control_val = match_row[f"Control_{col}"]
                         if not pd.isna(sample_val) and not pd.isna(control_val) and (sample_val + control_val) != 0:
-                            d = abs(sample_val - control_val) / (abs(sample_val) + abs(control_val)) * 100
+                            d = abs(sample_val - control_val) / (sample_val + control_val) * 100
                             match_row[f"{col}_Difference"] = round(d, 1)
                         else:
                             match_row[f"{col}_Difference"] = None
@@ -739,7 +739,7 @@ class CompareTab(QWidget):
                         new_match[f"Sample_{col}"] = new_sample_val
                         # Recalculate error
                         if (new_sample_val + control_val) != 0:
-                            new_d = abs(new_sample_val - control_val) / (abs(new_sample_val) + abs(control_val)) * 100
+                            new_d = abs(sample_val - new_sample_val) / (new_sample_val + sample_val) * 100
                             new_match[f"{col}_Difference"] = round(new_d, 1)
                         else:
                             new_match[f"{col}_Difference"] = None
