@@ -1,5 +1,5 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QLineEdit, QPushButton, QTableView, QHeaderView, QFileDialog, QMessageBox, QScrollArea, QComboBox, QGroupBox, QDialog
-from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QLineEdit, QPushButton, QTableView, QHeaderView, QFileDialog, QMessageBox, QScrollArea, QComboBox, QGroupBox, QDialog, QProgressDialog
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QStandardItemModel, QStandardItem, QColor
 import pandas as pd
 import math
@@ -11,6 +11,117 @@ import random
 # Setup logging
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+class ComparisonThread(QThread):
+    progress = pyqtSignal(int)
+    finished = pyqtSignal(list, list)
+    error = pyqtSignal(str)
+
+    def __init__(self, sample_df, control_df, sample_col_map, control_col_map, sorted_columns, non_numeric_columns, group_weights, magnitude_groups):
+        super().__init__()
+        self.sample_df = sample_df
+        self.control_df = control_df
+        self.sample_col_map = sample_col_map
+        self.control_col_map = control_col_map
+        self.sorted_columns = sorted_columns
+        self.non_numeric_columns = non_numeric_columns
+        self.group_weights = group_weights
+        self.magnitude_groups = magnitude_groups
+
+    def run(self):
+        try:
+            weights = {}
+            for order, entry in self.group_weights.items():
+                try:
+                    weight_val = float(entry.text() or str(order + 1))
+                except ValueError:
+                    logger.warning(f"Invalid weight for magnitude {order}, using {order + 1}")
+                    weight_val = order + 1
+                for col in self.magnitude_groups[order]:
+                    weights[col] = weight_val
+
+            included_columns = self.sorted_columns
+            all_columns = self.non_numeric_columns + included_columns
+            results = []
+            match_data = []
+            total_rows = len(self.sample_df)
+            for idx, sample_row in enumerate(self.sample_df.iterrows()):
+                _, sample_row = sample_row
+                sample_id = sample_row["SAMPLE ID"]
+                best_similarity = 0
+                best_control_id = None
+                best_column_diffs = {}
+                best_control_row = None
+
+                for _, control_row in self.control_df.iterrows():
+                    control_id = control_row["SAMPLE ID"]
+                    scores = []
+                    column_diffs = {}
+                    total_weight = sum(weights.get(col, 0) for col in included_columns)
+
+                    for col in included_columns:
+                        sample_val = sample_row[self.sample_col_map[col]]
+                        control_val = control_row[self.control_col_map[col]]
+                        if pd.isna(sample_val) or pd.isna(control_val):
+                            column_diffs[col] = None
+                            continue
+                        if abs(control_val) == 0:
+                            if abs(sample_val) == 0:
+                                scores.append(weights[col] * 1)
+                                column_diffs[col] = 0
+                            else:
+                                scores.append(0)
+                                column_diffs[col] = None
+                            continue
+                        diff = abs(sample_val - control_val) / abs(control_val)
+                        score = weights[col] * (1 / (1 + diff))
+                        scores.append(score)
+                        column_diffs[col] = diff * 100
+
+                    if total_weight > 0:
+                        similarity = (sum(scores) / total_weight) * 100
+                    else:
+                        similarity = 0
+
+                    if similarity > best_similarity:
+                        best_similarity = similarity
+                        best_control_id = control_id
+                        best_control_row = control_row
+                        best_column_diffs = column_diffs
+
+                result = {
+                    "Sample ID": sample_id,
+                    "Control ID": best_control_id,
+                    "Similarity (%)": round(best_similarity, 2)
+                }
+                results.append(result)
+                if best_control_row is not None:
+                    match_row = {
+                        "Sample ID": sample_id,
+                        "Control ID": best_control_id,
+                        "Similarity (%)": round(best_similarity, 2)
+                    }
+                    for col in all_columns:
+                        match_row[f"Sample_{col}"] = sample_row[self.sample_col_map[col]]
+                        match_row[f"Control_{col}"] = best_control_row[self.control_col_map[col]]
+                    for col in included_columns:
+                        sample_val = match_row[f"Sample_{col}"]
+                        control_val = match_row[f"Control_{col}"]
+                        if not pd.isna(sample_val) and not pd.isna(control_val) and (sample_val + control_val) != 0:
+                            d = abs(sample_val - control_val) / (sample_val + control_val) * 100
+                            match_row[f"{col}_Difference"] = round(d, 2)  # Changed to 2 decimal places
+                        else:
+                            match_row[f"{col}_Difference"] = None
+                    match_data.append(match_row)
+
+                self.progress.emit(int((idx + 1) / total_rows * 100))
+
+            results.sort(key=lambda x: x["Similarity (%)"], reverse=True)
+            match_data.sort(key=lambda x: x["Similarity (%)"], reverse=True)
+            self.finished.emit(match_data, all_columns)
+        except Exception as e:
+            logger.error(f"Error during comparison: {str(e)}")
+            self.error.emit(str(e))
 
 class CompareTab(QWidget):
     def __init__(self, app, parent=None):
@@ -24,8 +135,8 @@ class CompareTab(QWidget):
         self.numeric_columns = []
         self.non_numeric_columns = []
         self.headers = []
-        self.magnitude_groups = {}  # Groups of columns by magnitude order
-        self.group_weights = {}  # Textboxes for weights
+        self.magnitude_groups = {}
+        self.group_weights = {}
         self.match_data = []
         self.sample_col_map = {}
         self.control_col_map = {}
@@ -119,18 +230,19 @@ class CompareTab(QWidget):
                 subcontrol-position: top center;
                 padding: 0 5px;
             }
+            QProgressDialog {
+                min-width: 300px;
+            }
         """)
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(20, 20, 20, 20)
         main_layout.setSpacing(20)
 
-        # Header label
         header_label = QLabel("Element Comparison Tool")
         header_label.setStyleSheet("font: bold 18px 'Segoe UI'; color: #2E7D32; margin-bottom: 10px;")
         main_layout.addWidget(header_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        # File selection frame
         file_frame = QGroupBox("File Selection")
         file_frame.setStyleSheet("QGroupBox { background-color: #FFFFFF; border-radius: 6px; }")
         file_layout = QHBoxLayout(file_frame)
@@ -146,7 +258,6 @@ class CompareTab(QWidget):
         file_layout.addWidget(load_button)
         file_layout.addStretch()
 
-        # Sheet selection frame
         sheet_frame = QGroupBox("Sheet Selection")
         sheet_frame.setStyleSheet("QGroupBox { background-color: #FFFFFF; border-radius: 6px; }")
         sheet_layout = QHBoxLayout(sheet_frame)
@@ -167,16 +278,13 @@ class CompareTab(QWidget):
         sheet_layout.addWidget(self.control_combo)
         sheet_layout.addStretch()
 
-        # Status bar
         self.status_label = QLabel("Load an Excel file to begin")
         self.status_label.setStyleSheet("color: #6c757d; font: 13px 'Segoe UI'; background-color: #E3F2FD; padding: 10px; border-radius: 5px; border: 1px solid #BBDEFB;")
 
-        # Content frame
         content_frame = QFrame()
         content_layout = QVBoxLayout(content_frame)
         content_layout.setSpacing(15)
 
-        # Scrollable input frame for magnitude groups
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setMinimumHeight(400)
@@ -188,7 +296,6 @@ class CompareTab(QWidget):
         self.scroll_area.setWidget(self.input_frame)
         content_layout.addWidget(self.scroll_area)
 
-        # Button frame
         button_frame = QFrame()
         button_layout = QHBoxLayout(button_frame)
         button_layout.setSpacing(15)
@@ -264,12 +371,12 @@ class CompareTab(QWidget):
         self.group_weights.clear()
 
     def strip_wavelength(self, column_name):
-        """Strip wavelength suffix and extra spaces from column name (e.g., 'Ag 328.068' -> 'Ag')."""
+        """Strip wavelength suffix and extra spaces from column name."""
         cleaned = re.split(r'\s+\d+\.\d+', column_name)[0].strip()
         return cleaned
 
     def convert_limit_values(self, value):
-        """Convert '<X' values to their numeric limit (e.g., '<2' -> 2)."""
+        """Convert '<X' values to their numeric limit."""
         if isinstance(value, str) and value.startswith('<'):
             try:
                 return float(value[1:])
@@ -294,14 +401,12 @@ class CompareTab(QWidget):
             self.control_sheet = self.control_combo.currentText()
             logger.debug(f"Sample sheet: {self.sample_sheet}, Control sheet: {self.control_sheet}")
 
-            # Load sheets
             sample_df = pd.read_excel(self.file_path, sheet_name=self.sample_sheet, header=None)
             control_df = pd.read_excel(self.file_path, sheet_name=self.control_sheet, header=None)
 
             sample_df = sample_df.iloc[3:].reset_index(drop=True)
             control_df = control_df.iloc[3:].reset_index(drop=True)
 
-            # Read headers
             sample_headers = pd.read_excel(self.file_path, sheet_name=self.sample_sheet, nrows=1).columns.tolist()
             control_headers = pd.read_excel(self.file_path, sheet_name=self.control_sheet, nrows=1).columns.tolist()
 
@@ -315,7 +420,6 @@ class CompareTab(QWidget):
                 QMessageBox.critical(self, "Error", "First column must be 'SAMPLE ID'")
                 return
 
-            # Strip wavelengths and extra spaces, find common columns
             sample_columns = [self.strip_wavelength(col) for col in sample_headers[1:]]
             control_columns = [self.strip_wavelength(col) for col in control_headers[1:]]
             common_columns = list(set(sample_columns) & set(control_columns))
@@ -330,17 +434,14 @@ class CompareTab(QWidget):
                 QMessageBox.critical(self, "Error", "No common columns found between sheets!")
                 return
 
-            # Map original column names to stripped names
             self.sample_col_map = {self.strip_wavelength(col): col for col in sample_headers[1:]}
             self.control_col_map = {self.strip_wavelength(col): col for col in control_headers[1:]}
             logger.debug(f"Sample column map: {self.sample_col_map}")
             logger.debug(f"Control column map: {self.control_col_map}")
 
-            # Set column names
             sample_df.columns = ["SAMPLE ID"] + [self.sample_col_map.get(col, col) for col in sample_columns]
             control_df.columns = ["SAMPLE ID"] + [self.control_col_map.get(col, col) for col in control_columns]
 
-            # Convert limit values and numeric columns, and calculate order of magnitude
             avg_abs_values = {}
             self.magnitude_groups = {}
             self.column_weights = {}
@@ -376,7 +477,6 @@ class CompareTab(QWidget):
                         self.magnitude_groups[order_mag].append(col)
                     logger.debug(f"Order of magnitude for {col}: {order_mag}")
 
-            # Sort groups by magnitude descending
             sorted_groups = sorted(self.magnitude_groups.keys(), reverse=True)
             self.sorted_columns = []
             for order in sorted_groups:
@@ -418,13 +518,11 @@ class CompareTab(QWidget):
             group_layout = QVBoxLayout(group_box)
             group_layout.setSpacing(15)
 
-            # List of columns in group
             columns_label = QLabel(", ".join(columns_in_group))
             columns_label.setWordWrap(True)
             columns_label.setStyleSheet("color: #424242; font: 12px 'Segoe UI'; padding: 8px; background-color: #F9F9F9; border-radius: 4px; border: 1px solid #E0E0E0;")
             group_layout.addWidget(columns_label)
 
-            # Weight frame
             weight_layout = QHBoxLayout()
             weight_layout.setSpacing(8)
             weight_label = QLabel("Weight:")
@@ -458,110 +556,59 @@ class CompareTab(QWidget):
             return False
 
     def perform_comparison(self):
-        """Perform the comparison between sample and control data."""
-        logger.debug("Performing comparison")
+        """Perform the comparison between sample and control data in a separate thread."""
+        logger.debug("Starting comparison")
         self.status_label.setText("Comparing...")
         self.status_label.setStyleSheet("color: #ff9800; font: 13px 'Segoe UI'; background-color: #FFF3E0; padding: 10px; border-radius: 5px; border: 1px solid #FFE082;")
-        try:
-            weights = {}
-            for order, entry in self.group_weights.items():
-                try:
-                    weight_val = float(entry.text() or str(order + 1))
-                except ValueError:
-                    logger.warning(f"Invalid weight for magnitude {order}, using {order + 1}")
-                    weight_val = order + 1
-                for col in self.magnitude_groups[order]:
-                    weights[col] = weight_val
 
-            included_columns = self.sorted_columns
-            all_columns = self.non_numeric_columns + included_columns
-
-            results = []
-            self.match_data = []
-            for _, sample_row in self.sample_df.iterrows():
-                sample_id = sample_row["SAMPLE ID"]
-                best_similarity = 0
-                best_control_id = None
-                best_column_diffs = {}
-                best_control_row = None
-
-                for _, control_row in self.control_df.iterrows():
-                    control_id = control_row["SAMPLE ID"]
-                    scores = []
-                    column_diffs = {}
-                    total_weight = sum(weights.get(col, 0) for col in included_columns)
-
-                    for col in included_columns:
-                        sample_val = sample_row[self.sample_col_map[col]]
-                        control_val = control_row[self.control_col_map[col]]
-                        if pd.isna(sample_val) or pd.isna(control_val):
-                            column_diffs[col] = None
-                            continue
-                        if abs(control_val) == 0:
-                            if abs(sample_val) == 0:
-                                scores.append(weights[col] * 1)
-                                column_diffs[col] = 0
-                            else:
-                                scores.append(0)
-                                column_diffs[col] = None
-                            continue
-                        diff = abs(sample_val - control_val) / abs(control_val)
-                        score = weights[col] * (1 / (1 + diff))
-                        scores.append(score)
-                        column_diffs[col] = diff * 100
-
-                    if total_weight > 0:
-                        similarity = (sum(scores) / total_weight) * 100
-                    else:
-                        similarity = 0
-
-                    if similarity > best_similarity:
-                        best_similarity = similarity
-                        best_control_id = control_id
-                        best_control_row = control_row
-                        best_column_diffs = column_diffs
-
-                result = {
-                    "Sample ID": sample_id,
-                    "Control ID": best_control_id,
-                    "Similarity (%)": round(best_similarity, 2)
-                }
-                results.append(result)
-                if best_control_row is not None:
-                    match_row = {
-                        "Sample ID": sample_id,
-                        "Control ID": best_control_id,
-                        "Similarity (%)": round(best_similarity, 2)
-                    }
-                    for col in all_columns:
-                        match_row[f"Sample_{col}"] = sample_row[self.sample_col_map[col]]
-                        match_row[f"Control_{col}"] = best_control_row[self.control_col_map[col]]
-                    for col in included_columns:
-                        sample_val = match_row[f"Sample_{col}"]
-                        control_val = match_row[f"Control_{col}"]
-                        if not pd.isna(sample_val) and not pd.isna(control_val) and (sample_val + control_val) != 0:
-                            d = abs(sample_val - control_val) / (sample_val + control_val) * 100
-                            match_row[f"{col}_Difference"] = round(d, 1)
-                        else:
-                            match_row[f"{col}_Difference"] = None
-                    self.match_data.append(match_row)
-
-            # Sort results by similarity (descending)
-            results.sort(key=lambda x: x["Similarity (%)"], reverse=True)
-            self.match_data.sort(key=lambda x: x["Similarity (%)"], reverse=True)
-
-            self.show_results_dialog(self.match_data, all_columns, included_columns)
-            self.status_label.setText("Comparison completed")
-            self.status_label.setStyleSheet("color: #2e7d32; font: 13px 'Segoe UI'; background-color: #E8F5E9; padding: 10px; border-radius: 5px; border: 1px solid #A5D6A7;")
-
-        except Exception as e:
-            logger.error(f"Error during comparison: {str(e)}")
-            self.status_label.setText(f"Error: {str(e)}")
+        if self.sample_df is None or self.control_df is None or self.sample_df.empty or self.control_df.empty:
+            logger.error("Sample or control data not loaded or empty")
+            self.status_label.setText("Error: Sample or control data not loaded or empty")
             self.status_label.setStyleSheet("color: #d32f2f; font: 13px 'Segoe UI'; background-color: #FFEBEE; padding: 10px; border-radius: 5px; border: 1px solid #EF9A9A;")
-            QMessageBox.critical(self, "Error", f"Comparison failed:\n{str(e)}")
+            QMessageBox.critical(self, "Error", "Sample or control data not loaded or empty!")
+            return
+
+        self.progress_dialog = QProgressDialog("Performing comparison...", "Cancel", 0, 100, self)
+        self.progress_dialog.setWindowTitle("Comparison Progress")
+        self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self.progress_dialog.setAutoClose(True)
+        self.progress_dialog.canceled.connect(self.cancel_comparison)
+
+        self.thread = ComparisonThread(
+            self.sample_df, self.control_df, self.sample_col_map, self.control_col_map,
+            self.sorted_columns, self.non_numeric_columns, self.group_weights, self.magnitude_groups
+        )
+        self.thread.progress.connect(self.progress_dialog.setValue)
+        self.thread.finished.connect(self.on_comparison_finished)
+        self.thread.error.connect(self.on_comparison_error)
+        self.thread.start()
+
+    def cancel_comparison(self):
+        """Cancel the comparison thread."""
+        if hasattr(self, 'thread') and self.thread.isRunning():
+            self.thread.terminate()
+            self.status_label.setText("Comparison cancelled")
+            self.status_label.setStyleSheet("color: #6c757d; font: 13px 'Segoe UI'; background-color: #E3F2FD; padding: 10px; border-radius: 5px; border: 1px solid #BBDEFB;")
+            self.progress_dialog.close()
+
+    def on_comparison_finished(self, match_data, all_columns):
+        """Handle completion of comparison thread."""
+        self.match_data = match_data
+        self.progress_dialog.close()
+        self.show_results_dialog(self.match_data, all_columns, self.sorted_columns)
+        self.status_label.setText("Comparison completed")
+        self.status_label.setStyleSheet("color: #2e7d32; font: 13px 'Segoe UI'; background-color: #E8F5E9; padding: 10px; border-radius: 5px; border: 1px solid #A5D6A7;")
+
+    def on_comparison_error(self, error_msg):
+        """Handle errors from comparison thread."""
+        self.progress_dialog.close()
+        logger.error(f"Comparison error: {error_msg}")
+        self.status_label.setText(f"Error: {error_msg}")
+        self.status_label.setStyleSheet("color: #d32f2f; font: 13px 'Segoe UI'; background-color: #FFEBEE; padding: 10px; border-radius: 5px; border: 1px solid #EF9A9A;")
+        QMessageBox.critical(self, "Error", f"Comparison failed:\n{error_msg}")
 
     def show_results_dialog(self, match_data, all_columns, numeric_columns):
-        """Show comparison results in a new dialog with scrollable table in the new format."""
+        """Show comparison results in a new dialog with scrollable table."""
         dialog = QDialog(self)
         dialog.setWindowTitle("Comparison Results")
         dialog.setStyleSheet("""
@@ -591,12 +638,10 @@ class CompareTab(QWidget):
         layout.setSpacing(15)
         layout.setContentsMargins(15, 15, 15, 15)
 
-        # Header label
         header_label = QLabel("Comparison Results")
         header_label.setStyleSheet("font: bold 16px 'Segoe UI'; color: #2E7D32; margin-bottom: 10px;")
         layout.addWidget(header_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        # Button frame for Export and Correct
         button_frame = QFrame()
         button_layout = QHBoxLayout(button_frame)
         button_layout.setSpacing(10)
@@ -625,35 +670,34 @@ class CompareTab(QWidget):
         num_matches = len(match_data)
 
         for match in match_data:
-            # Sample row
             sample_row_items = [
                 QStandardItem("Sample"),
                 QStandardItem(str(match["Sample ID"])),
             ]
             for col in self.non_numeric_columns + numeric_columns:
                 val = match.get(f"Sample_{col}", "")
-                sample_row_items.append(QStandardItem(str(val) if not pd.isna(val) else ""))
+                val_str = f"{val:.2f}" if isinstance(val, (int, float)) and not pd.isna(val) else str(val) if not pd.isna(val) else ""
+                sample_row_items.append(QStandardItem(val_str))
             for item in sample_row_items:
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 item.setBackground(QColor("#E8F5E9"))
             model.appendRow(sample_row_items)
             row_idx += 1
 
-            # Control row
             control_row_items = [
                 QStandardItem("Control"),
                 QStandardItem(str(match["Control ID"])),
             ]
             for col in self.non_numeric_columns + numeric_columns:
                 val = match.get(f"Control_{col}", "")
-                control_row_items.append(QStandardItem(str(val) if not pd.isna(val) else ""))
+                val_str = f"{val:.2f}" if isinstance(val, (int, float)) and not pd.isna(val) else str(val) if not pd.isna(val) else ""
+                control_row_items.append(QStandardItem(val_str))
             for item in control_row_items:
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 item.setBackground(QColor("#E3F2FD"))
             model.appendRow(control_row_items)
             row_idx += 1
 
-            # d row
             d_row_items = [
                 QStandardItem("d"),
                 QStandardItem(""),
@@ -662,7 +706,7 @@ class CompareTab(QWidget):
                 d_row_items.append(QStandardItem(""))
             for col in numeric_columns:
                 d = match.get(f"{col}_Difference")
-                d_str = f"{d:.1f}" if d is not None else ""
+                d_str = f"{d:.2f}" if d is not None else ""  # Changed to 2 decimal places
                 item = QStandardItem(d_str)
                 item.setBackground(QColor("#FF0000") if d is not None and d > 5 else QColor("#FFEBEE"))
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -676,7 +720,6 @@ class CompareTab(QWidget):
             model.appendRow(d_row_items)
             row_idx += 1
 
-            # Blank row
             blank_row_items = [QStandardItem("") for _ in range(len(columns))]
             for item in blank_row_items:
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -684,7 +727,6 @@ class CompareTab(QWidget):
             model.appendRow(blank_row_items)
             row_idx += 1
 
-        # Sum row
         sum_row_items = [
             QStandardItem("Sum d"),
             QStandardItem(""),
@@ -693,18 +735,17 @@ class CompareTab(QWidget):
             sum_row_items.append(QStandardItem(""))
         for col in numeric_columns:
             sum_d = column_sums[col]
-            sum_row_items.append(QStandardItem(f"{sum_d:.1f}"))
+            sum_row_items.append(QStandardItem(f"{sum_d:.2f}"))  # Changed to 2 decimal places
         for item in sum_row_items:
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             item.setBackground(QColor("#F5F6F5"))
         model.appendRow(sum_row_items)
 
-        # Average
         if total_errors:
             overall_avg = sum(total_errors) / len(total_errors)
         else:
             overall_avg = 0
-        avg_label = QLabel(f"Overall Average Error: {overall_avg:.1f}")
+        avg_label = QLabel(f"Overall Average Error: {overall_avg:.2f}")  # Changed to 2 decimal places
         avg_label.setStyleSheet("font: bold 14px 'Segoe UI'; color: #D32F2F;")
         layout.addWidget(avg_label)
 
@@ -733,14 +774,12 @@ class CompareTab(QWidget):
                     sample_val = match.get(f"Sample_{col}")
                     control_val = match.get(f"Control_{col}")
                     if not pd.isna(sample_val) and not pd.isna(control_val):
-                        # Adjust sample value by random factor between 0.9 and 1.1
                         factor = random.uniform(0.9, 1.1)
                         new_sample_val = sample_val * factor
                         new_match[f"Sample_{col}"] = new_sample_val
-                        # Recalculate error
                         if (new_sample_val + control_val) != 0:
                             new_d = abs(sample_val - new_sample_val) / (new_sample_val + sample_val) * 100
-                            new_match[f"{col}_Difference"] = round(new_d, 1)
+                            new_match[f"{col}_Difference"] = round(new_d, 2)  # Changed to 2 decimal places
                         else:
                             new_match[f"{col}_Difference"] = None
             new_match_data.append(new_match)
@@ -752,7 +791,7 @@ class CompareTab(QWidget):
         self.status_label.setStyleSheet("color: #2e7d32; font: 13px 'Segoe UI'; background-color: #E8F5E9; padding: 10px; border-radius: 5px; border: 1px solid #A5D6A7;")
 
     def export_report(self, match_data, all_columns, numeric_columns):
-        """Export comparison results to an Excel file in the new format."""
+        """Export comparison results to an Excel file."""
         logger.debug("Exporting comparison report")
         if not match_data:
             logger.error("No comparison data available")
@@ -774,16 +813,14 @@ class CompareTab(QWidget):
             with Workbook(output_path) as workbook:
                 worksheet = workbook.add_worksheet("Report")
 
-                # Formats
                 header_format = workbook.add_format({'bold': True, 'bg_color': '#D1E7DD', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
                 sample_format = workbook.add_format({'bg_color': '#E8F5E9', 'border': 1, 'align': 'center'})
                 control_format = workbook.add_format({'bg_color': '#E3F2FD', 'border': 1, 'align': 'center'})
                 d_format = workbook.add_format({'bg_color': '#FFEBEE', 'border': 1, 'align': 'center'})
                 blank_format = workbook.add_format({'bg_color': '#FFFFFF', 'border': 1, 'align': 'center'})
                 sum_format = workbook.add_format({'bold': True, 'bg_color': '#F5F6F5', 'border': 1, 'align': 'center'})
-                number_format = workbook.add_format({'num_format': '0.0', 'bg_color': '#FFEBEE', 'border': 1, 'align': 'center'})
+                number_format = workbook.add_format({'num_format': '0.00', 'bg_color': '#FFEBEE', 'border': 1, 'align': 'center'})  # Changed to 2 decimal places
 
-                # Write headers
                 headers = ["Type", "ID"] + all_columns
                 for col_idx, header in enumerate(headers):
                     worksheet.write(0, col_idx, header, header_format)
@@ -793,35 +830,32 @@ class CompareTab(QWidget):
                 total_errors = []
 
                 for match in match_data:
-                    # Sample row
                     worksheet.write(row, 0, "Sample", sample_format)
                     worksheet.write(row, 1, match["Sample ID"], sample_format)
                     col_idx = 2
                     for col in self.non_numeric_columns + numeric_columns:
                         val = match.get(f"Sample_{col}", "")
                         format_to_use = sample_format
-                        if pd.isna(val):
-                            worksheet.write(row, col_idx, "", format_to_use)
+                        if isinstance(val, (int, float)) and not pd.isna(val):
+                            worksheet.write(row, col_idx, round(val, 2), format_to_use)  # Changed to 2 decimal places
                         else:
-                            worksheet.write(row, col_idx, val, format_to_use)
+                            worksheet.write(row, col_idx, str(val) if not pd.isna(val) else "", format_to_use)
                         col_idx += 1
                     row += 1
 
-                    # Control row
                     worksheet.write(row, 0, "Control", control_format)
                     worksheet.write(row, 1, match["Control ID"], control_format)
                     col_idx = 2
                     for col in self.non_numeric_columns + numeric_columns:
                         val = match.get(f"Control_{col}", "")
                         format_to_use = control_format
-                        if pd.isna(val):
-                            worksheet.write(row, col_idx, "", format_to_use)
+                        if isinstance(val, (int, float)) and not pd.isna(val):
+                            worksheet.write(row, col_idx, round(val, 2), format_to_use)  # Changed to 2 decimal places
                         else:
-                            worksheet.write(row, col_idx, val, format_to_use)
+                            worksheet.write(row, col_idx, str(val) if not pd.isna(val) else "", format_to_use)
                         col_idx += 1
                     row += 1
 
-                    # d row
                     worksheet.write(row, 0, "d", d_format)
                     worksheet.write(row, 1, "", d_format)
                     col_idx = 2
@@ -831,7 +865,7 @@ class CompareTab(QWidget):
                     for col in numeric_columns:
                         d = match.get(f"{col}_Difference")
                         if d is not None:
-                            worksheet.write(row, col_idx, d, number_format)
+                            worksheet.write(row, col_idx, round(d, 2), number_format)  # Changed to 2 decimal places
                             column_sums[col] += d
                             total_errors.append(d)
                         else:
@@ -839,12 +873,10 @@ class CompareTab(QWidget):
                         col_idx += 1
                     row += 1
 
-                    # Blank row
                     for col_idx in range(len(headers)):
                         worksheet.write(row, col_idx, "", blank_format)
                     row += 1
 
-                # Sum row
                 worksheet.write(row, 0, "Sum d", sum_format)
                 worksheet.write(row, 1, "", sum_format)
                 col_idx = 2
@@ -853,16 +885,15 @@ class CompareTab(QWidget):
                     col_idx += 1
                 for col in numeric_columns:
                     sum_d = column_sums[col]
-                    worksheet.write(row, col_idx, sum_d, sum_format)
+                    worksheet.write(row, col_idx, round(sum_d, 2), sum_format)  # Changed to 2 decimal places
                     col_idx += 1
                 row += 1
 
-                # Overall average
                 if total_errors:
                     overall_avg = sum(total_errors) / len(total_errors)
                 else:
                     overall_avg = 0
-                worksheet.write(row, 0, f"Overall Average Error: {overall_avg:.1f}", sum_format)
+                worksheet.write(row, 0, f"Overall Average Error: {overall_avg:.2f}", sum_format)  # Changed to 2 decimal places
 
             self.status_label.setText(f"Report exported to {output_path.split('/')[-1]}")
             self.status_label.setStyleSheet("color: #2e7d32; font: 13px 'Segoe UI'; background-color: #E8F5E9; padding: 10px; border-radius: 5px; border: 1px solid #A5D6A7;")
