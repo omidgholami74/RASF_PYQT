@@ -115,7 +115,6 @@ class ReportDialog(QDialog):
                 th { background-color: #007bff; color: white; }
                 .decision-section { margin-top: 40px; padding: 15px; background-color: #e9ecef; border-radius: 8px; }
                 .decision-section ul { list-style-type: disc; margin-left: 20px; }
-                .model-comparison { margin-top: 20px; padding: 10px; background-color: #f0f8ff; border-left: 4px solid #007bff; }
             </style>
         </head>
         <body>
@@ -227,15 +226,12 @@ class ReportDialog(QDialog):
             
             # Collect for decision analysis (parse numbers where possible)
             try:
-                range_match = re.match(r'\[([\d.]+) to ([\d.]+)\]', acceptable_range)
-                lower = float(range_match.group(1)) if range_match else None
-                upper = float(range_match.group(2)) if range_match else None
                 crm_entry = {
                     'id': verification_id,
                     'cert_val': float(certificate_val) if certificate_val else None,
                     'sample_val': float(sample_val) if sample_val else None,
-                    'lower': lower,
-                    'upper': upper,
+                    'lower': float(re.match(r'\[([\d.]+) to ([\d.]+)\]', acceptable_range).group(1)) if acceptable_range else None,
+                    'upper': float(re.match(r'\[([\d.]+) to ([\d.]+)\]', acceptable_range).group(2)) if acceptable_range else None,
                     'blank_val': float(blank_val) if blank_val else 0,
                     'soln_conc': float(soln_conc) if soln_conc else None,
                     'wavelength': 'default'  # Extend if multiple
@@ -247,7 +243,7 @@ class ReportDialog(QDialog):
         
         html += "</table>"
         
-        # Add textual decision analysis section with both models
+        # Add textual decision analysis section with three models
         html += self.generate_decision_analysis(crm_data)
         
         html += """
@@ -257,7 +253,7 @@ class ReportDialog(QDialog):
         self.text_edit.setHtml(html)
 
     def generate_decision_analysis(self, crm_data):
-        """Generate textual decision analysis based on conditions, line by line, with final professional decision using both models."""
+        """Generate textual decision analysis based on conditions, line by line, with final professional decision using three models."""
         if not crm_data:
             return "<div class='decision-section'><h2>Decision Analysis</h2><p>No sufficient data for analysis.</p></div>"
         
@@ -344,8 +340,8 @@ class ReportDialog(QDialog):
         
         analysis_html += "</ul>"
         
-        # Model 1: Old Model - Maximize in-range count with regularization
-        def objective_old(params):
+        # Model 1: Model A - Maximize in-range count with regularization
+        def objective_a(params):
             blank_adjust, scale = params
             in_range_count = 0
             for d in crm_data:
@@ -356,42 +352,42 @@ class ReportDialog(QDialog):
             return -in_range_count + reg / total
         
         avg_cert = np.mean([d['cert_val'] for d in crm_data])
-        blank_bounds_old = (-avg_cert * 0.15, avg_cert * 0.15)
-        scale_bounds_old = (1 - max_corr, 1 + max_corr)
-        bounds_old = [blank_bounds_old, scale_bounds_old]
+        blank_bounds_a = (-avg_cert * 0.15, avg_cert * 0.15)
+        scale_bounds_a = (1 - max_corr, 1 + max_corr)
+        bounds_a = [blank_bounds_a, scale_bounds_a]
         
         try:
-            res_old = differential_evolution(objective_old, bounds_old)
-            if res_old.success:
-                blank_adjust_old, scale_old = res_old.x
-                in_range_after_old = 0
+            res_a = differential_evolution(objective_a, bounds_a)
+            if res_a.success:
+                blank_adjust_a, scale_a = res_a.x
+                in_range_after_a = 0
                 for d in crm_data:
-                    adjusted_val = (d['sample_val'] - d['blank_val'] - blank_adjust_old) * scale_old
+                    adjusted_val = (d['sample_val'] - d['blank_val'] - blank_adjust_a) * scale_a
                     if d['lower'] <= adjusted_val <= d['upper']:
-                        in_range_after_old += 1
-                # Check blank only for old model
-                def objective_blank_old(p):
-                    return objective_old([p[0], 1])
-                res_blank_old = differential_evolution(objective_blank_old, [blank_bounds_old])
-                if res_blank_old.success:
-                    blank_adjust_blank_old = res_blank_old.x[0]
-                    in_range_blank_old = 0
+                        in_range_after_a += 1
+                # Check blank only for model A
+                def objective_blank_a(p):
+                    return objective_a([p[0], 1])
+                res_blank_a = differential_evolution(objective_blank_a, [blank_bounds_a])
+                if res_blank_a.success:
+                    blank_adjust_blank_a = res_blank_a.x[0]
+                    in_range_blank_a = 0
                     for d in crm_data:
-                        adjusted_val = (d['sample_val'] - d['blank_val'] - blank_adjust_blank_old) * 1
+                        adjusted_val = (d['sample_val'] - d['blank_val'] - blank_adjust_blank_a) * 1
                         if d['lower'] <= adjusted_val <= d['upper']:
-                            in_range_blank_old += 1
-                    if in_range_blank_old >= in_range_after_old or (abs(scale_old - 1) > 0.01 and in_range_blank_old / total >= 0.75):
-                        blank_adjust_old = blank_adjust_blank_old
-                        scale_old = 1.0
-                        in_range_after_old = in_range_blank_old
-                analysis_html += f'<div class="model-comparison"><strong>Old Model (In-Range Maximization):</strong> Blank adjust: {blank_adjust_old:.3f}, Scale: {scale_old:.3f}, In-range: {in_range_after_old}/{total}.</div>'
+                            in_range_blank_a += 1
+                    if in_range_blank_a > in_range_after_a or (in_range_blank_a == in_range_after_a and in_range_blank_a / total >= 0.75):
+                        blank_adjust_a = blank_adjust_blank_a
+                        scale_a = 1.0
+                        in_range_after_a = in_range_blank_a
+                analysis_html += f'<div class="model-comparison"><strong>Model A (In-Range Maximization):</strong> Blank adjust: {blank_adjust_a:.3f}, Scale: {scale_a:.3f}, In-range: {in_range_after_a}/{total}.</div>'
             else:
-                analysis_html += '<div class="model-comparison"><strong>Old Model:</strong> Optimization failed.</div>'
+                analysis_html += '<div class="model-comparison"><strong>Model A:</strong> Optimization failed.</div>'
         except Exception as e:
-            analysis_html += f'<div class="model-comparison"><strong>Old Model:</strong> Error: {str(e)}.</div>'
+            analysis_html += f'<div class="model-comparison"><strong>Model A:</strong> Error: {str(e)}.</div>'
         
-        # Model 2: New Model - Minimize distances with Huber loss and penalties
-        def objective_new(params):
+        # Model 2: Model B - Minimize distances with Huber loss and penalties
+        def objective_b(params):
             blank_adjust, scale = params
             total_distance = 0.0
             for d in crm_data:
@@ -408,84 +404,132 @@ class ReportDialog(QDialog):
             blank_penalty = max(0, abs(blank_adjust) - 0.15 * avg_cert) ** 2
             return (total_distance / total) + reg + blank_penalty
         
-        blank_bounds_new = (-avg_cert * 0.15, avg_cert * 0.15)
-        scale_bounds_new = (1 - max_corr, 1 + max_corr)
-        bounds_new = [blank_bounds_new, scale_bounds_new]
+        blank_bounds_b = (-avg_cert * 0.15, avg_cert * 0.15)
+        scale_bounds_b = (1 - max_corr, 1 + max_corr)
+        bounds_b = [blank_bounds_b, scale_bounds_b]
         
         try:
-            res_new = differential_evolution(objective_new, bounds_new)
-            if res_new.success:
-                blank_adjust_new, scale_new = res_new.x
-                distances_new = []
-                in_range_after_new = 0
+            res_b = differential_evolution(objective_b, bounds_b)
+            if res_b.success:
+                blank_adjust_b, scale_b = res_b.x
+                distances_b = []
+                in_range_after_b = 0
                 for d in crm_data:
-                    adjusted_val = (d['sample_val'] - d['blank_val'] - blank_adjust_new) * scale_new
+                    adjusted_val = (d['sample_val'] - d['blank_val'] - blank_adjust_b) * scale_b
                     if d['lower'] <= adjusted_val <= d['upper']:
-                        in_range_after_new += 1
-                        distances_new.append(0)
+                        in_range_after_b += 1
+                        distances_b.append(0)
                     else:
                         dist = min(abs(adjusted_val - d['lower']), abs(adjusted_val - d['upper']))
-                        distances_new.append(dist)
-                avg_distance_new = np.mean(distances_new)
-                # Check blank only for new model
-                def objective_blank_new(p):
-                    return objective_new([p[0], 1])
-                res_blank_new = differential_evolution(objective_blank_new, [blank_bounds_new])
-                if res_blank_new.success:
-                    blank_adjust_blank_new = res_blank_new.x[0]
-                    distances_blank_new = []
-                    in_range_blank_new = 0
+                        distances_b.append(dist)
+                avg_distance_b = np.mean(distances_b)
+                # Check blank only for model B
+                def objective_blank_b(p):
+                    return objective_b([p[0], 1])
+                res_blank_b = differential_evolution(objective_blank_b, [blank_bounds_b])
+                if res_blank_b.success:
+                    blank_adjust_blank_b = res_blank_b.x[0]
+                    distances_blank_b = []
+                    in_range_blank_b = 0
                     for d in crm_data:
-                        adjusted_val = (d['sample_val'] - d['blank_val'] - blank_adjust_blank_new) * 1
+                        adjusted_val = (d['sample_val'] - d['blank_val'] - blank_adjust_blank_b) * 1
                         if d['lower'] <= adjusted_val <= d['upper']:
-                            in_range_blank_new += 1
-                            distances_blank_new.append(0)
+                            in_range_blank_b += 1
+                            distances_blank_b.append(0)
                         else:
                             dist = min(abs(adjusted_val - d['lower']), abs(adjusted_val - d['upper']))
-                            distances_blank_new.append(dist)
-                    avg_distance_blank_new = np.mean(distances_blank_new)
-                    if avg_distance_blank_new < avg_distance_new or (abs(scale_new - 1) > 0.01 and in_range_blank_new / total >= 0.75):
-                        blank_adjust_new = blank_adjust_blank_new
-                        scale_new = 1.0
-                        in_range_after_new = in_range_blank_new
-                        avg_distance_new = avg_distance_blank_new
-                analysis_html += f'<div class="model-comparison"><strong>New Model (Distance Minimization):</strong> Blank adjust: {blank_adjust_new:.3f}, Scale: {scale_new:.3f}, In-range: {in_range_after_new}/{total}, Avg distance: {avg_distance_new:.3f}.</div>'
+                            distances_blank_b.append(dist)
+                    avg_distance_blank_b = np.mean(distances_blank_b)
+                    if in_range_blank_b > in_range_after_b or (in_range_blank_b == in_range_after_b and in_range_blank_b / total >= 0.75):
+                        blank_adjust_b = blank_adjust_blank_b
+                        scale_b = 1.0
+                        in_range_after_b = in_range_blank_b
+                        avg_distance_b = avg_distance_blank_b
+                analysis_html += f'<div class="model-comparison"><strong>Model B (Distance Minimization):</strong> Blank adjust: {blank_adjust_b:.3f}, Scale: {scale_b:.3f}, In-range: {in_range_after_b}/{total}, Avg distance: {avg_distance_b:.3f}.</div>'
             else:
-                analysis_html += '<div class="model-comparison"><strong>New Model:</strong> Optimization failed.</div>'
+                analysis_html += '<div class="model-comparison"><strong>Model B:</strong> Optimization failed.</div>'
         except Exception as e:
-            analysis_html += f'<div class="model-comparison"><strong>New Model:</strong> Error: {str(e)}.</div>'
+            analysis_html += f'<div class="model-comparison"><strong>Model B:</strong> Error: {str(e)}.</div>'
+
+        # Model 3: Model C - Minimize sum of squared errors to cert_val with regularization
+        def objective_c(params):
+            blank_adjust, scale = params
+            total_sse = 0.0
+            for d in crm_data:
+                adjusted_val = (d['sample_val'] - d['blank_val'] - blank_adjust) * scale
+                total_sse += (adjusted_val - d['cert_val']) ** 2
+            reg = 0.1 * (abs(blank_adjust) + abs(scale - 1) * np.mean([abs(d['sample_val']) for d in crm_data]))
+            avg_cert = np.mean([d['cert_val'] for d in crm_data])
+            blank_penalty = max(0, abs(blank_adjust) - 0.15 * avg_cert) ** 2
+            return (total_sse / total) + reg + blank_penalty
+        
+        blank_bounds_c = (-avg_cert * 0.15, avg_cert * 0.15)
+        scale_bounds_c = (1 - max_corr, 1 + max_corr)
+        bounds_c = [blank_bounds_c, scale_bounds_c]
+        
+        try:
+            res_c = differential_evolution(objective_c, bounds_c)
+            if res_c.success:
+                blank_adjust_c, scale_c = res_c.x
+                distances_c = []
+                in_range_after_c = 0
+                for d in crm_data:
+                    adjusted_val = (d['sample_val'] - d['blank_val'] - blank_adjust_c) * scale_c
+                    if d['lower'] <= adjusted_val <= d['upper']:
+                        in_range_after_c += 1
+                        distances_c.append(0)
+                    else:
+                        dist = min(abs(adjusted_val - d['lower']), abs(adjusted_val - d['upper']))
+                        distances_c.append(dist)
+                avg_distance_c = np.mean(distances_c)
+                # Check blank only for model C
+                def objective_blank_c(p):
+                    return objective_c([p[0], 1])
+                res_blank_c = differential_evolution(objective_blank_c, [blank_bounds_c])
+                if res_blank_c.success:
+                    blank_adjust_blank_c = res_blank_c.x[0]
+                    distances_blank_c = []
+                    in_range_blank_c = 0
+                    for d in crm_data:
+                        adjusted_val = (d['sample_val'] - d['blank_val'] - blank_adjust_blank_c) * 1
+                        if d['lower'] <= adjusted_val <= d['upper']:
+                            in_range_blank_c += 1
+                            distances_blank_c.append(0)
+                        else:
+                            dist = min(abs(adjusted_val - d['lower']), abs(adjusted_val - d['upper']))
+                            distances_blank_c.append(dist)
+                    avg_distance_blank_c = np.mean(distances_blank_c)
+                    if in_range_blank_c > in_range_after_c or (in_range_blank_c == in_range_after_c and in_range_blank_c / total >= 0.75):
+                        blank_adjust_c = blank_adjust_blank_c
+                        scale_c = 1.0
+                        in_range_after_c = in_range_blank_c
+                        avg_distance_c = avg_distance_blank_c
+                analysis_html += f'<div class="model-comparison"><strong>Model C (SSE Minimization to Cert Val):</strong> Blank adjust: {blank_adjust_c:.3f}, Scale: {scale_c:.3f}, In-range: {in_range_after_c}/{total}, Avg distance: {avg_distance_c:.3f}.</div>'
+            else:
+                analysis_html += '<div class="model-comparison"><strong>Model C:</strong> Optimization failed.</div>'
+        except Exception as e:
+            analysis_html += f'<div class="model-comparison"><strong>Model C:</strong> Error: {str(e)}.</div>'
         
         # Comparison and Final Decision
         initial_distances = [0 if d['lower'] <= d['sample_val'] <= d['upper'] else min(abs(d['sample_val'] - d['lower']), abs(d['sample_val'] - d['upper'])) for d in crm_data]
         avg_distance_initial = np.mean(initial_distances)
-        initial_in_range_count = sum(d['lower'] <= d['sample_val'] <= d['upper'] for d in crm_data)
         
-        # Choose the better model based on in-range and avg distance
-        if 'in_range_after_old' in locals() and 'in_range_after_new' in locals():
-            if in_range_after_old > in_range_after_new or (in_range_after_old == in_range_after_new and avg_distance_new > avg_distance_initial):
-                recommended_blank = blank_adjust_old
-                recommended_scale = scale_old
-                recommended_in_range = in_range_after_old
-                recommended_avg_distance = "N/A"  # Old model focuses on count
-                model_used = "Old Model"
-            else:
-                recommended_blank = blank_adjust_new
-                recommended_scale = scale_new
-                recommended_in_range = in_range_after_new
-                recommended_avg_distance = avg_distance_new
-                model_used = "New Model"
-        elif 'in_range_after_old' in locals():
-            recommended_blank = blank_adjust_old
-            recommended_scale = scale_old
-            recommended_in_range = in_range_after_old
-            recommended_avg_distance = "N/A"
-            model_used = "Old Model"
-        elif 'in_range_after_new' in locals():
-            recommended_blank = blank_adjust_new
-            recommended_scale = scale_new
-            recommended_in_range = in_range_after_new
-            recommended_avg_distance = avg_distance_new
-            model_used = "New Model"
+        models = []
+        if 'in_range_after_a' in locals():
+            models.append(('A', in_range_after_a, blank_adjust_a, scale_a, 'N/A' if scale_a == 1 else 'With Scale'))
+        if 'in_range_after_b' in locals():
+            models.append(('B', in_range_after_b, blank_adjust_b, scale_b, avg_distance_b))
+        if 'in_range_after_c' in locals():
+            models.append(('C', in_range_after_c, blank_adjust_c, scale_c, avg_distance_c))
+        
+        if models:
+            # Select best model: highest in-range, then lowest avg distance if applicable
+            best_model = max(models, key=lambda m: (m[1], -m[4] if isinstance(m[4], float) else float('inf')))
+            recommended_blank = best_model[2]
+            recommended_scale = best_model[3]
+            recommended_in_range = best_model[1]
+            recommended_avg_distance = best_model[4]
+            model_used = best_model[0]
         else:
             recommended_blank = best_blank_adjust
             recommended_scale = 1.0
@@ -493,16 +537,19 @@ class ReportDialog(QDialog):
             recommended_avg_distance = "N/A"
             model_used = "Fallback"
         
-        analysis_html += f"<p><strong>Model Comparison Summary:</strong> Old Model in-range: {in_range_after_old if 'in_range_after_old' in locals() else 'N/A'}/{total}, New Model in-range: {in_range_after_new if 'in_range_after_new' in locals() else 'N/A'}/{total}, Avg distance initial: {avg_distance_initial:.3f}.</p>"
-        analysis_html += f"<p><strong>Recommended Correction ({model_used}):</strong> Blank adjust: {recommended_blank:.3f}, Scale: {recommended_scale:.3f}, achieving {recommended_in_range}/{total} in range (avg distance: {recommended_avg_distance}).</p>"
+        analysis_html += f"<p><strong>Model Comparison Summary:</strong> Initial in-range: {initial_in_range}/{total}, Avg distance initial: {avg_distance_initial:.3f}.</p>"
+        analysis_html += f"<p><strong>Recommended Correction (Model {model_used}):</strong> Blank adjust: {recommended_blank:.3f}, Scale: {recommended_scale:.3f}, achieving {recommended_in_range}/{total} in range (avg distance: {recommended_avg_distance}).</p>"
         
         # Final decision
-        if recommended_in_range == total:
-            recommended_action = f"Apply the recommended correction; all data will be in range."
-        elif recommended_in_range >= max(0.75 * total, total - 2):
-            recommended_action = f"Apply the recommended correction; majority ({recommended_in_range}/{total}) in range."
+        if recommended_in_range > initial_in_range:
+            if recommended_in_range == total:
+                recommended_action = f"Apply the recommended correction; all data will be in range."
+            elif recommended_in_range >= max(0.75 * total, total - 2):
+                recommended_action = f"Apply the recommended correction; majority ({recommended_in_range}/{total}) in range."
+            else:
+                recommended_action = f"Apply the recommended correction for improvement; {recommended_in_range}/{total} in range."
         else:
-            recommended_action = f"Apply the recommended correction for improvement; {recommended_in_range}/{total} in range. Consider manual review if needed."
+            recommended_action = "No improvement; do not apply changes. Consider manual review if needed."
         
         analysis_html += f"<p><strong>Final Decision:</strong> {recommended_action} This ensures the majority of data falls within acceptable ranges with the least disruption, aligning with the goal of optimal data integrity.</p></div>"
         
