@@ -12,6 +12,8 @@ import pandas as pd
 import logging
 import numpy as np
 from scipy.optimize import differential_evolution
+from scipy.special import huber
+from collections import defaultdict
 
 class FilterDialog(QDialog):
     """Dialog for filtering rows or columns with checkboxes."""
