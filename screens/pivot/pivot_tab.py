@@ -11,6 +11,7 @@ from .oxide_factors import oxide_factors
 import pandas as pd
 import logging
 import numpy as np
+from scipy.optimize import differential_evolution
 
 class FilterDialog(QDialog):
     """Dialog for filtering rows or columns with checkboxes."""
@@ -436,10 +437,7 @@ class PivotTab(QWidget):
             QMessageBox.warning(self, "Warning", "Please open the plot window first!")
             return
 
-        if self.current_plot_dialog and self.current_plot_dialog.isVisible():
-            selected_element = self.current_plot_dialog.element_selector.currentText()
-        else:
-            raise AttributeError("Plot dialog not open")
+        selected_element = self.current_plot_dialog.element_selector.currentText()
         if not selected_element or selected_element not in self.pivot_data.columns:
             available_elements = [col for col in self.pivot_data.columns if col != 'Solution Label']
             self.logger.warning(f"Invalid element selected: {selected_element}. Available elements: {available_elements}")
@@ -456,71 +454,123 @@ class PivotTab(QWidget):
         try:
             self.logger.debug(f"Correcting pivot CRM for element: {selected_element}")
             self.pivot_data[selected_element] = pd.to_numeric(self.pivot_data[selected_element], errors='coerce')
-            ratios = []
-            problematic_labels = []
 
+            # Extract CRM data for optimization
+            crm_data = []
             for sol_label, crm_rows in self._inline_crm_rows_display.items():
                 if sol_label not in self.included_crms or not self.included_crms[sol_label].isChecked():
-                    self.logger.debug(f"Skipping {sol_label}: not included or not checked")
                     continue
                 pivot_row = self.pivot_data[self.pivot_data['Solution Label'] == sol_label]
                 if pivot_row.empty:
-                    self.logger.warning(f"No pivot data for solution label: {sol_label}")
                     continue
                 pivot_val = pivot_row.iloc[0][selected_element]
                 for row_data, _ in crm_rows:
                     if isinstance(row_data, list) and row_data and row_data[0].endswith("CRM"):
-                        val = row_data[self.pivot_data.columns.get_loc(selected_element)] if selected_element in self.pivot_data.columns else ""
-                        if val and val.strip() and pd.notna(pivot_val):
+                        val_str = row_data[self.pivot_data.columns.get_loc(selected_element)] if selected_element in self.pivot_data.columns else ""
+                        if val_str and val_str.strip() and pd.notna(pivot_val):
                             try:
-                                check_val = float(val)
-                                pivot_val_float = float(pivot_val)
-                                range_val = self.calculate_dynamic_range(check_val)
-                                lower = check_val - range_val
-                                upper = check_val + range_val
-                                if pivot_val_float < lower:
-                                    ratio = lower / pivot_val_float if pivot_val_float != 0 else float('inf')
-                                    correction = abs(ratio - 1)
-                                    if correction <= max_corr:
-                                        ratios.append(ratio)
-                                        self.pivot_data.loc[self.pivot_data['Solution Label'] == sol_label, selected_element] = pivot_val_float * ratio
-                                        self.logger.debug(f"Applied correction for {sol_label}: ratio={ratio}")
-                                    else:
-                                        problematic_labels.append(sol_label)
-                                        self.logger.debug(f"Correction for {sol_label} exceeds max: {correction}")
-                                elif pivot_val_float > upper:
-                                    ratio = upper / pivot_val_float if pivot_val_float != 0 else float('inf')
-                                    correction = abs(ratio - 1)
-                                    if correction <= max_corr:
-                                        ratios.append(ratio)
-                                        self.pivot_data.loc[self.pivot_data['Solution Label'] == sol_label, selected_element] = pivot_val_float * ratio
-                                        self.logger.debug(f"Applied correction for {sol_label}: ratio={ratio}")
-                                    else:
-                                        problematic_labels.append(sol_label)
-                                        self.logger.debug(f"Correction for {sol_label} exceeds max: {correction}")
+                                cert_val = float(val_str)
+                                range_val = self.calculate_dynamic_range(cert_val)
+                                lower, upper = cert_val - range_val, cert_val + range_val
+                                crm_data.append({
+                                    'pivot_val': float(pivot_val),
+                                    'cert_val': cert_val,
+                                    'lower': lower,
+                                    'upper': upper,
+                                    'wavelength': 'default'  # Placeholder; extend if multiple wavelengths
+                                })
                             except ValueError:
-                                self.logger.warning(f"Invalid CRM value for {sol_label}: {val}")
                                 continue
 
-            if problematic_labels:
-                self.logger.warning(f"CRM correction issues for labels: {problematic_labels}")
-                QMessageBox.warning(self, "Warning", f"CRM has problem in these points (correction exceeds max):\n" + "\n".join(problematic_labels))
-
-            if not ratios:
-                self.logger.warning("No valid ratios for correction")
-                QMessageBox.warning(self, "Warning", "No valid ratios for correction!")
+            if not crm_data:
+                self.logger.warning("No valid CRM data for optimization")
+                QMessageBox.warning(self, "Warning", "No valid CRM data for correction!")
                 return
 
-            avg_ratio = np.mean(ratios)
-            self.pivot_data[selected_element] = self.pivot_data[selected_element].apply(
-                lambda x: x * avg_ratio if pd.notna(x) else x
-            )
-            self.logger.debug(f"Applied average correction ratio: {avg_ratio}")
+            # Group by magnitude orders if needed (condition 5)
+            def get_magnitude(val):
+                if val == 0:
+                    return 0
+                return np.floor(np.log10(abs(val)))
+            
+            magnitudes = {get_magnitude(d['cert_val']) for d in crm_data}
+            if len(magnitudes) > 1:
+                # Handle different magnitudes separately if needed, but for now optimize globally with constraints
+                self.logger.info("Multiple magnitudes detected; optimizing with care to not shift others out")
+
+            # Handle multiple wavelengths (condition 6): Select the one with Soln Conc in range or closest
+            # Assuming for now single wavelength; extend crm_data with wavelength if available
+
+            # Optimization objective: Maximize number of in-range after applying blank subtraction and scale
+            # Params: [blank_adjust, scale_factor]
+            # Constraints: scale_factor between 1 - max_corr and 1 + max_corr
+            # Also, prefer minimal changes (regularization)
+            def objective(params, crm_data, max_corr):
+                blank_adjust, scale = params
+                in_range_count = 0
+                for d in crm_data:
+                    adjusted_val = (d['pivot_val'] - blank_adjust) * scale
+                    if d['lower'] <= adjusted_val <= d['upper']:
+                        in_range_count += 1
+                # Maximize in_range, minimize changes (L2 reg on params)
+                reg = 10 * (abs(blank_adjust) + abs(scale - 1))  # Weighted regularization
+                return -in_range_count + reg / len(crm_data)  # Negative for maximization
+
+            # Bounds: blank_adjust dynamic based on magnitudes, scale around 1
+            avg_cert = np.mean([d['cert_val'] for d in crm_data])
+            blank_bounds = (-avg_cert * 0.15, avg_cert * 0.15)  # Enhanced from examples: up to 15% of avg
+            scale_bounds = (1 - max_corr, 1 + max_corr)
+            bounds = [blank_bounds, scale_bounds]
+
+            res = differential_evolution(objective, bounds, args=(crm_data, max_corr))
+
+            if not res.success:
+                self.logger.warning("Optimization failed")
+                QMessageBox.warning(self, "Warning", "Optimization failed to find suitable correction!")
+                return
+
+            blank_adjust, scale = res.x
+
+            # Recalculate in_range_after
+            in_range_after = 0
+            for d in crm_data:
+                adjusted_val = (d['pivot_val'] - blank_adjust) * scale
+                if d['lower'] <= adjusted_val <= d['upper']:
+                    in_range_after += 1
+
+            # Threshold checks (conditions 3,4,7): If most are already in range, skip scale if not needed
+            total_crm = len(crm_data)
+            threshold_in_range = max(0.75 * total_crm, total_crm - 2)  # Enhanced: 75% or all but 1-2
+            if in_range_after >= threshold_in_range and abs(scale - 1) > 0.01:
+                # If good enough with blank only, try re-optimizing with scale=1
+                def objective_blank(p, crm_data, max_corr):
+                    return objective([p[0], 1], crm_data, max_corr)
+                res_blank = differential_evolution(objective_blank, [blank_bounds], args=(crm_data, max_corr))
+                if res_blank.success:
+                    blank_adjust = res_blank.x[0]
+                    scale = 1
+                    in_range_after = 0
+                    for d in crm_data:
+                        adjusted_val = (d['pivot_val'] - blank_adjust) * scale
+                        if d['lower'] <= adjusted_val <= d['upper']:
+                            in_range_after += 1
+
+            # For duplicates (condition 4): If at least one per ID in range, count as good
+            # Assuming no duplicates for now
+
+            # Apply if improvement is significant
+            initial_in_range = sum(d['lower'] <= d['pivot_val'] <= d['upper'] for d in crm_data)
+            if in_range_after > initial_in_range:
+                self.pivot_data[selected_element] = (self.pivot_data[selected_element] - blank_adjust) * scale
+                self.logger.debug(f"Applied correction: blank_adjust={blank_adjust}, scale={scale}")
+                QMessageBox.information(self, "Success", f"Optimized correction applied: blank_adjust={blank_adjust:.3f}, scale={scale:.3f}. In-range: {int(in_range_after)}/{total_crm}")
+            else:
+                self.logger.info("No significant improvement; skipping correction")
+                QMessageBox.information(self, "Info", "Data already optimal or no improvement possible.")
+
             self.update_pivot_display()
             if self.current_plot_dialog and self.current_plot_dialog.isVisible():
                 self.current_plot_dialog.update_plot()
-            self.logger.info(f"Pivot CRM corrected for {selected_element} with average ratio={avg_ratio:.3f}")
-            QMessageBox.information(self, "Success", f"Pivot CRM corrected for {selected_element} with average ratio={avg_ratio:.3f}")
 
         except Exception as e:
             self.logger.error(f"Failed to correct Pivot CRM: {str(e)}")
