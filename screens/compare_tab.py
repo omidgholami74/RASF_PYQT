@@ -45,14 +45,11 @@ class ComparisonThread(QThread):
             results = []
             match_data = []
             used_control_ids = set()  # برای ردیابی Control IDهای استفاده‌شده
-            used_sample_ids = set()   # برای ردیابی Sample IDهای تخصیص‌یافته
             total_rows = len(self.sample_df)
 
             for idx, sample_row in enumerate(self.sample_df.iterrows()):
                 _, sample_row = sample_row
                 sample_id = sample_row["SAMPLE ID"]
-                if sample_id in used_sample_ids:
-                    continue  # از Sample IDهای تخصیص‌یافته صرف‌نظر کن
                 best_similarity = 0
                 best_control_id = None
                 best_column_diffs = {}
@@ -96,35 +93,43 @@ class ComparisonThread(QThread):
                         best_control_row = control_row
                         best_column_diffs = column_diffs
 
+                # ایجاد ردیف برای Sample، حتی اگر مچ نشود
+                result = {
+                    "Sample ID": sample_id,
+                    "Control ID": best_control_id if best_control_id is not None else None,
+                    "Similarity (%)": round(best_similarity, 2) if best_control_id is not None else 0
+                }
+                results.append(result)
+
+                match_row = {
+                    "Sample ID": sample_id,
+                    "Control ID": best_control_id if best_control_id is not None else None,
+                    "Similarity (%)": round(best_similarity, 2) if best_control_id is not None else 0
+                }
+                for col in all_columns:
+                    sample_col_name = self.sample_col_map[col]
+                    match_row[f"Sample_{col}"] = sample_row[sample_col_name]
+                    # اگر مچ نشده، مقادیر Control را خالی بگذار
+                    if best_control_row is not None:
+                        control_col_name = self.control_col_map[col]
+                        match_row[f"Control_{col}"] = best_control_row[control_col_name]
+                    else:
+                        match_row[f"Control_{col}"] = None
+                for col in included_columns:
+                    if best_control_id is not None:
+                        sample_val = match_row[f"Sample_{col}"]
+                        control_val = match_row[f"Control_{col}"]
+                        if not pd.isna(sample_val) and not pd.isna(control_val) and (sample_val + control_val) != 0:
+                            d = abs(sample_val - control_val) / (sample_val + control_val) * 100
+                            match_row[f"{col}_Difference"] = round(d, 2)
+                        else:
+                            match_row[f"{col}_Difference"] = None
+                    else:
+                        match_row[f"{col}_Difference"] = None
+
+                match_data.append(match_row)
                 if best_control_id is not None:
                     used_control_ids.add(best_control_id)  # اضافه کردن Control ID به استفاده‌شده‌ها
-                    used_sample_ids.add(sample_id)         # اضافه کردن Sample ID به تخصیص‌یافته‌ها
-                    result = {
-                        "Sample ID": sample_id,
-                        "Control ID": best_control_id,
-                        "Similarity (%)": round(best_similarity, 2)
-                    }
-                    results.append(result)
-                    if best_control_row is not None:
-                        match_row = {
-                            "Sample ID": sample_id,
-                            "Control ID": best_control_id,
-                            "Similarity (%)": round(best_similarity, 2)
-                        }
-                        for col in all_columns:
-                            sample_col_name = self.sample_col_map[col]
-                            control_col_name = self.control_col_map[col]
-                            match_row[f"Sample_{col}"] = sample_row[sample_col_name]
-                            match_row[f"Control_{col}"] = best_control_row[control_col_name]
-                        for col in included_columns:
-                            sample_val = match_row[f"Sample_{col}"]
-                            control_val = match_row[f"Control_{col}"]
-                            if not pd.isna(sample_val) and not pd.isna(control_val) and (sample_val + control_val) != 0:
-                                d = abs(sample_val - control_val) / (sample_val + control_val) * 100
-                                match_row[f"{col}_Difference"] = round(d, 2)
-                            else:
-                                match_row[f"{col}_Difference"] = None
-                        match_data.append(match_row)
 
                 self.progress.emit(int((idx + 1) / total_rows * 100))
 
