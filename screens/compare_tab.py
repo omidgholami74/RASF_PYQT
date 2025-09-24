@@ -44,10 +44,15 @@ class ComparisonThread(QThread):
             all_columns = self.non_numeric_columns + included_columns
             results = []
             match_data = []
+            used_control_ids = set()  # برای ردیابی Control IDهای استفاده‌شده
+            used_sample_ids = set()   # برای ردیابی Sample IDهای تخصیص‌یافته
             total_rows = len(self.sample_df)
+
             for idx, sample_row in enumerate(self.sample_df.iterrows()):
                 _, sample_row = sample_row
                 sample_id = sample_row["SAMPLE ID"]
+                if sample_id in used_sample_ids:
+                    continue  # از Sample IDهای تخصیص‌یافته صرف‌نظر کن
                 best_similarity = 0
                 best_control_id = None
                 best_column_diffs = {}
@@ -55,6 +60,8 @@ class ComparisonThread(QThread):
 
                 for _, control_row in self.control_df.iterrows():
                     control_id = control_row["SAMPLE ID"]
+                    if control_id in used_control_ids:
+                        continue  # از Control IDهای استفاده‌شده صرف‌نظر کن
                     scores = []
                     column_diffs = {}
                     total_weight = sum(weights.get(col, 0) for col in included_columns)
@@ -89,30 +96,35 @@ class ComparisonThread(QThread):
                         best_control_row = control_row
                         best_column_diffs = column_diffs
 
-                result = {
-                    "Sample ID": sample_id,
-                    "Control ID": best_control_id,
-                    "Similarity (%)": round(best_similarity, 2)
-                }
-                results.append(result)
-                if best_control_row is not None:
-                    match_row = {
+                if best_control_id is not None:
+                    used_control_ids.add(best_control_id)  # اضافه کردن Control ID به استفاده‌شده‌ها
+                    used_sample_ids.add(sample_id)         # اضافه کردن Sample ID به تخصیص‌یافته‌ها
+                    result = {
                         "Sample ID": sample_id,
                         "Control ID": best_control_id,
                         "Similarity (%)": round(best_similarity, 2)
                     }
-                    for col in all_columns:
-                        match_row[f"Sample_{col}"] = sample_row[self.sample_col_map[col]]
-                        match_row[f"Control_{col}"] = best_control_row[self.control_col_map[col]]
-                    for col in included_columns:
-                        sample_val = match_row[f"Sample_{col}"]
-                        control_val = match_row[f"Control_{col}"]
-                        if not pd.isna(sample_val) and not pd.isna(control_val) and (sample_val + control_val) != 0:
-                            d = abs(sample_val - control_val) / (sample_val + control_val) * 100
-                            match_row[f"{col}_Difference"] = round(d, 2)  # Changed to 2 decimal places
-                        else:
-                            match_row[f"{col}_Difference"] = None
-                    match_data.append(match_row)
+                    results.append(result)
+                    if best_control_row is not None:
+                        match_row = {
+                            "Sample ID": sample_id,
+                            "Control ID": best_control_id,
+                            "Similarity (%)": round(best_similarity, 2)
+                        }
+                        for col in all_columns:
+                            sample_col_name = self.sample_col_map[col]
+                            control_col_name = self.control_col_map[col]
+                            match_row[f"Sample_{col}"] = sample_row[sample_col_name]
+                            match_row[f"Control_{col}"] = best_control_row[control_col_name]
+                        for col in included_columns:
+                            sample_val = match_row[f"Sample_{col}"]
+                            control_val = match_row[f"Control_{col}"]
+                            if not pd.isna(sample_val) and not pd.isna(control_val) and (sample_val + control_val) != 0:
+                                d = abs(sample_val - control_val) / (sample_val + control_val) * 100
+                                match_row[f"{col}_Difference"] = round(d, 2)
+                            else:
+                                match_row[f"{col}_Difference"] = None
+                        match_data.append(match_row)
 
                 self.progress.emit(int((idx + 1) / total_rows * 100))
 
@@ -122,7 +134,6 @@ class ComparisonThread(QThread):
         except Exception as e:
             logger.error(f"Error during comparison: {str(e)}")
             self.error.emit(str(e))
-
 class CompareTab(QWidget):
     def __init__(self, app, parent=None):
         super().__init__(parent)
@@ -660,7 +671,7 @@ class CompareTab(QWidget):
         button_layout.addStretch()
         layout.addWidget(button_frame)
 
-        columns = ["Type", "ID"] + all_columns
+        columns = ["Type", "ID", "Similarity (%)"] + [f"{col}" for col in all_columns] + [f"{col}_Difference" for col in numeric_columns]
         model = QStandardItemModel()
         model.setHorizontalHeaderLabels(columns)
 
@@ -673,11 +684,16 @@ class CompareTab(QWidget):
             sample_row_items = [
                 QStandardItem("Sample"),
                 QStandardItem(str(match["Sample ID"])),
+                QStandardItem(f"{match['Similarity (%)']:.2f}"),
             ]
-            for col in self.non_numeric_columns + numeric_columns:
+            for col in all_columns:
                 val = match.get(f"Sample_{col}", "")
                 val_str = f"{val:.2f}" if isinstance(val, (int, float)) and not pd.isna(val) else str(val) if not pd.isna(val) else ""
                 sample_row_items.append(QStandardItem(val_str))
+            for col in numeric_columns:
+                d = match.get(f"{col}_Difference")
+                d_str = f"{d:.2f}" if d is not None else ""
+                sample_row_items.append(QStandardItem(d_str))
             for item in sample_row_items:
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 item.setBackground(QColor("#E8F5E9"))
@@ -687,11 +703,14 @@ class CompareTab(QWidget):
             control_row_items = [
                 QStandardItem("Control"),
                 QStandardItem(str(match["Control ID"])),
+                QStandardItem(""),
             ]
-            for col in self.non_numeric_columns + numeric_columns:
+            for col in all_columns:
                 val = match.get(f"Control_{col}", "")
                 val_str = f"{val:.2f}" if isinstance(val, (int, float)) and not pd.isna(val) else str(val) if not pd.isna(val) else ""
                 control_row_items.append(QStandardItem(val_str))
+            for col in numeric_columns:
+                control_row_items.append(QStandardItem(""))
             for item in control_row_items:
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 item.setBackground(QColor("#E3F2FD"))
@@ -701,20 +720,26 @@ class CompareTab(QWidget):
             d_row_items = [
                 QStandardItem("d"),
                 QStandardItem(""),
+                QStandardItem(""),
             ]
-            for col in self.non_numeric_columns:
-                d_row_items.append(QStandardItem(""))
+            for col in all_columns:
+                if col in self.non_numeric_columns:
+                    d_row_items.append(QStandardItem(""))
+                else:
+                    d = match.get(f"{col}_Difference")
+                    d_str = f"{d:.2f}" if d is not None else ""
+                    item = QStandardItem(d_str)
+                    item.setBackground(QColor("#FF0000") if d is not None and d > 5 else QColor("#FFEBEE"))
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    d_row_items.append(item)
             for col in numeric_columns:
                 d = match.get(f"{col}_Difference")
-                d_str = f"{d:.2f}" if d is not None else ""  # Changed to 2 decimal places
+                d_str = f"{d:.2f}" if d is not None else ""
                 item = QStandardItem(d_str)
                 item.setBackground(QColor("#FF0000") if d is not None and d > 5 else QColor("#FFEBEE"))
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 d_row_items.append(item)
-                if d is not None:
-                    column_sums[col] += d
-                    total_errors.append(d)
-            for item in d_row_items[:len(self.non_numeric_columns) + 2]:
+            for item in d_row_items[:len(all_columns) + 3]:
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 item.setBackground(QColor("#FFEBEE"))
             model.appendRow(d_row_items)
@@ -727,15 +752,22 @@ class CompareTab(QWidget):
             model.appendRow(blank_row_items)
             row_idx += 1
 
+            for col in numeric_columns:
+                d = match.get(f"{col}_Difference")
+                if d is not None:
+                    column_sums[col] += d
+                    total_errors.append(d)
+
         sum_row_items = [
             QStandardItem("Sum d"),
             QStandardItem(""),
+            QStandardItem(""),
         ]
-        for col in self.non_numeric_columns:
+        for col in all_columns:
             sum_row_items.append(QStandardItem(""))
         for col in numeric_columns:
             sum_d = column_sums[col]
-            sum_row_items.append(QStandardItem(f"{sum_d:.2f}"))  # Changed to 2 decimal places
+            sum_row_items.append(QStandardItem(f"{sum_d:.2f}"))
         for item in sum_row_items:
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             item.setBackground(QColor("#F5F6F5"))
@@ -745,7 +777,7 @@ class CompareTab(QWidget):
             overall_avg = sum(total_errors) / len(total_errors)
         else:
             overall_avg = 0
-        avg_label = QLabel(f"Overall Average Error: {overall_avg:.2f}")  # Changed to 2 decimal places
+        avg_label = QLabel(f"Overall Average Error: {overall_avg:.2f}")
         avg_label.setStyleSheet("font: bold 14px 'Segoe UI'; color: #D32F2F;")
         layout.addWidget(avg_label)
 
