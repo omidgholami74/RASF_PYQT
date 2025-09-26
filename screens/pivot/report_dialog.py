@@ -268,16 +268,28 @@ class ReportDialog(QDialog):
         else:
             analysis_html += "Insufficient; consider additional adjustments.</li>"
         
-        # Condition 2: If blank insufficient, try adding dynamic increment to blank
-        best_blank_adjust = 0
-        best_in_range = 0
-        possible_adjusts = [-15, -10, -5, 0, 5, 10, 15]  # Enhanced dynamic: based on magnitude, but flat for simplicity
-        for adjust in possible_adjusts:
-            in_range = sum(d['lower'] <= (d['sample_val'] - d['blank_val'] + adjust) <= d['upper'] for d in crm_data)  # Note: + adjust if adding to blank means subtracting less, but per user: adding to blank to bring in range
-            if in_range > best_in_range:
-                best_in_range = in_range
-                best_blank_adjust = adjust
-        analysis_html += f"<li>Condition 2: Adjusting blank by {best_blank_adjust} (dynamic increment), achieves {best_in_range}/{total} in range. "
+        # Condition 2: If blank insufficient, try adding dynamic increment to blank (no limits, use optimization with wide bounds)
+        def objective_cond2(p):
+            adjust = p[0]
+            in_range = sum(d['lower'] <= (d['sample_val'] - d['blank_val'] + adjust) <= d['upper'] for d in crm_data)
+            return -in_range
+        
+        max_val = max([abs(d['sample_val']) for d in crm_data] + [abs(d['blank_val']) for d in crm_data] + [1])
+        adjust_bounds = [(-10 * max_val, 10 * max_val)]
+        
+        try:
+            res_cond2 = differential_evolution(objective_cond2, adjust_bounds)
+            if res_cond2.success:
+                best_blank_adjust = res_cond2.x[0]
+                best_in_range = -res_cond2.fun
+            else:
+                best_blank_adjust = 0
+                best_in_range = in_range_with_blank
+        except:
+            best_blank_adjust = 0
+            best_in_range = in_range_with_blank
+        
+        analysis_html += f"<li>Condition 2: Adjusting blank by {best_blank_adjust:.3f} (dynamic increment, no limits), achieves {best_in_range}/{total} in range. "
         if best_in_range / total >= 0.75:
             analysis_html += "No scaling needed; apply this blank adjustment globally.</li>"
         else:
@@ -293,7 +305,6 @@ class ReportDialog(QDialog):
         
         # Condition 4: For duplicate CRM IDs, if at least one in range, no scaling
         # Group by ID
-        from collections import defaultdict
         id_groups = defaultdict(list)
         for d in crm_data:
             id_groups[d['id']].append(d)
@@ -336,11 +347,17 @@ class ReportDialog(QDialog):
             analysis_html += "<li>Condition 7: No valid scales within bounds.</li>"
         
         # Condition 8: Best blank selection
-        analysis_html += f"<li>Condition 8: Best blank adjustment selected as {best_blank_adjust}, maximizing in-range to {best_in_range}/{total}.</li>"
+        analysis_html += f"<li>Condition 8: Best blank adjustment selected as {best_blank_adjust:.3f}, maximizing in-range to {best_in_range}/{total}.</li>"
         
         analysis_html += "</ul>"
         
-        # Model 1: Model A - Maximize in-range count with regularization
+        # Compute wide bounds for blank_adjust (no strict limits)
+        avg_cert = np.mean([d['cert_val'] for d in crm_data])
+        max_val = max([abs(d['sample_val']) for d in crm_data] + [abs(d['blank_val']) for d in crm_data] + [abs(avg_cert), 1])
+        blank_bounds_wide = (-10 * max_val, 10 * max_val)
+        scale_bounds = (1 - max_corr, 1 + max_corr)
+        
+        # Model 1: Model A - Maximize in-range count with regularization (no penalty on blank)
         def objective_a(params):
             blank_adjust, scale = params
             in_range_count = 0
@@ -348,13 +365,10 @@ class ReportDialog(QDialog):
                 adjusted_val = (d['sample_val'] - d['blank_val'] - blank_adjust) * scale
                 if d['lower'] <= adjusted_val <= d['upper']:
                     in_range_count += 1
-            reg = 10 * (abs(blank_adjust) + abs(scale - 1))
+            reg = 10 * abs(scale - 1)  # No penalty on blank_adjust
             return -in_range_count + reg / total
         
-        avg_cert = np.mean([d['cert_val'] for d in crm_data])
-        blank_bounds_a = (-avg_cert * 0.15, avg_cert * 0.15)
-        scale_bounds_a = (1 - max_corr, 1 + max_corr)
-        bounds_a = [blank_bounds_a, scale_bounds_a]
+        bounds_a = [blank_bounds_wide, scale_bounds]
         
         try:
             res_a = differential_evolution(objective_a, bounds_a)
@@ -368,7 +382,7 @@ class ReportDialog(QDialog):
                 # Check blank only for model A
                 def objective_blank_a(p):
                     return objective_a([p[0], 1])
-                res_blank_a = differential_evolution(objective_blank_a, [blank_bounds_a])
+                res_blank_a = differential_evolution(objective_blank_a, [blank_bounds_wide])
                 if res_blank_a.success:
                     blank_adjust_blank_a = res_blank_a.x[0]
                     in_range_blank_a = 0
@@ -386,7 +400,7 @@ class ReportDialog(QDialog):
         except Exception as e:
             analysis_html += f'<div class="model-comparison"><strong>Model A:</strong> Error: {str(e)}.</div>'
         
-        # Model 2: Model B - Minimize distances with Huber loss and penalties
+        # Model 2: Model B - Minimize distances with Huber loss and penalties (no penalty on blank)
         def objective_b(params):
             blank_adjust, scale = params
             total_distance = 0.0
@@ -399,14 +413,10 @@ class ReportDialog(QDialog):
                 else:
                     dist = 0.0
                 total_distance += huber(1.0, dist)  # Robust loss
-            reg = 0.1 * (abs(blank_adjust) + abs(scale - 1) * np.mean([abs(d['sample_val']) for d in crm_data]))
-            avg_cert = np.mean([d['cert_val'] for d in crm_data])
-            blank_penalty = max(0, abs(blank_adjust) - 0.15 * avg_cert) ** 2
-            return (total_distance / total) + reg + blank_penalty
+            reg = 0.1 * (abs(scale - 1) * np.mean([abs(d['sample_val']) for d in crm_data]))  # No penalty on blank_adjust
+            return (total_distance / total) + reg  # No blank_penalty
         
-        blank_bounds_b = (-avg_cert * 0.15, avg_cert * 0.15)
-        scale_bounds_b = (1 - max_corr, 1 + max_corr)
-        bounds_b = [blank_bounds_b, scale_bounds_b]
+        bounds_b = [blank_bounds_wide, scale_bounds]
         
         try:
             res_b = differential_evolution(objective_b, bounds_b)
@@ -426,7 +436,7 @@ class ReportDialog(QDialog):
                 # Check blank only for model B
                 def objective_blank_b(p):
                     return objective_b([p[0], 1])
-                res_blank_b = differential_evolution(objective_blank_b, [blank_bounds_b])
+                res_blank_b = differential_evolution(objective_blank_b, [blank_bounds_wide])
                 if res_blank_b.success:
                     blank_adjust_blank_b = res_blank_b.x[0]
                     distances_blank_b = []
@@ -451,21 +461,17 @@ class ReportDialog(QDialog):
         except Exception as e:
             analysis_html += f'<div class="model-comparison"><strong>Model B:</strong> Error: {str(e)}.</div>'
 
-        # Model 3: Model C - Minimize sum of squared errors to cert_val with regularization
+        # Model 3: Model C - Minimize sum of squared errors to cert_val with regularization (no penalty on blank)
         def objective_c(params):
             blank_adjust, scale = params
             total_sse = 0.0
             for d in crm_data:
                 adjusted_val = (d['sample_val'] - d['blank_val'] - blank_adjust) * scale
                 total_sse += (adjusted_val - d['cert_val']) ** 2
-            reg = 0.1 * (abs(blank_adjust) + abs(scale - 1) * np.mean([abs(d['sample_val']) for d in crm_data]))
-            avg_cert = np.mean([d['cert_val'] for d in crm_data])
-            blank_penalty = max(0, abs(blank_adjust) - 0.15 * avg_cert) ** 2
-            return (total_sse / total) + reg + blank_penalty
+            reg = 0.1 * (abs(scale - 1) * np.mean([abs(d['sample_val']) for d in crm_data]))  # No penalty on blank_adjust
+            return (total_sse / total) + reg  # No blank_penalty
         
-        blank_bounds_c = (-avg_cert * 0.15, avg_cert * 0.15)
-        scale_bounds_c = (1 - max_corr, 1 + max_corr)
-        bounds_c = [blank_bounds_c, scale_bounds_c]
+        bounds_c = [blank_bounds_wide, scale_bounds]
         
         try:
             res_c = differential_evolution(objective_c, bounds_c)
@@ -485,7 +491,7 @@ class ReportDialog(QDialog):
                 # Check blank only for model C
                 def objective_blank_c(p):
                     return objective_c([p[0], 1])
-                res_blank_c = differential_evolution(objective_blank_c, [blank_bounds_c])
+                res_blank_c = differential_evolution(objective_blank_c, [blank_bounds_wide])
                 if res_blank_c.success:
                     blank_adjust_blank_c = res_blank_c.x[0]
                     distances_blank_c = []
