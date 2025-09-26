@@ -120,7 +120,7 @@ class ComparisonThread(QThread):
                         sample_val = match_row[f"Sample_{col}"]
                         control_val = match_row[f"Control_{col}"]
                         if not pd.isna(sample_val) and not pd.isna(control_val) and (sample_val + control_val) != 0:
-                            d = abs(sample_val - control_val) / (sample_val + control_val) * 100
+                            d = abs(sample_val - control_val) / abs(sample_val + control_val) * 100
                             match_row[f"{col}_Difference"] = round(d, 2)
                         else:
                             match_row[f"{col}_Difference"] = None
@@ -815,7 +815,7 @@ class CompareTab(QWidget):
                         new_sample_val = sample_val * factor
                         new_match[f"Sample_{col}"] = new_sample_val
                         if (new_sample_val + control_val) != 0:
-                            new_d = abs(sample_val - new_sample_val) / (new_sample_val + sample_val) * 100
+                            new_d = abs(sample_val - new_sample_val) / abs(new_sample_val + sample_val) * 100
                             new_match[f"{col}_Difference"] = round(new_d, 2)  # Changed to 2 decimal places
                         else:
                             new_match[f"{col}_Difference"] = None
