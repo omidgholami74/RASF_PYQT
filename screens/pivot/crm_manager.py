@@ -36,19 +36,44 @@ class CRMManager:
                 self.logger.info("No CRM, par, or OREAS rows found in pivot data")
                 return
 
+            # Query the pivoted CRM table
             cursor = conn.cursor()
-            cursor.execute("PRAGMA table_info(crm)")
+            cursor.execute("PRAGMA table_info(pivot_crm)")
             cols = [x[1] for x in cursor.fetchall()]
-            required = {'CRM ID', 'Element', 'Sort Grade', 'Analysis Method'}
+            required = {'CRM ID'}
             if not required.issubset(cols):
-                QMessageBox.warning(self.pivot_tab, "Error", "CRM table missing required columns!")
-                self.logger.error("CRM table missing required columns")
+                QMessageBox.warning(self.pivot_tab, "Error", "pivot_crm table missing required columns!")
+                self.logger.error("pivot_crm table missing required columns")
                 return
 
-            # Debug: Print available CRM IDs and Analysis Methods in the database
-            cursor.execute("SELECT DISTINCT [CRM ID], [Analysis Method] FROM crm")
-            db_crm_data = cursor.fetchall()
-            print(f"Available CRM IDs and Analysis Methods in database: {db_crm_data}")
+            # Debug: Print available CRM IDs and columns
+            cursor.execute("SELECT DISTINCT [CRM ID] FROM pivot_crm")
+            db_crm_ids = cursor.fetchall()
+            print(f"Available CRM IDs in database: {db_crm_ids}")
+            print(f"pivot_crm columns: {cols}")
+            print(f"pivot_data columns: {list(self.pivot_tab.pivot_data.columns)}")
+
+            # Create element-to-wavelength mapping
+            element_to_columns = {}
+            if self.pivot_tab.original_df is not None and 'Element' in self.pivot_tab.original_df.columns:
+                # Use original_df to map elements to wavelength columns
+                for col in self.pivot_tab.pivot_data.columns:
+                    if col == 'Solution Label':
+                        continue
+                    element = col.split()[0].strip()  # e.g., 'Cu 324.754' -> 'Cu'
+                    if element not in element_to_columns:
+                        element_to_columns[element] = []
+                    element_to_columns[element].append(col)
+            else:
+                # Fallback: Parse pivot_data column names
+                for col in self.pivot_tab.pivot_data.columns:
+                    if col == 'Solution Label':
+                        continue
+                    element = col.split()[0].strip()  # e.g., 'Cu 324.754' -> 'Cu'
+                    if element not in element_to_columns:
+                        element_to_columns[element] = []
+                    element_to_columns[element].append(col)
+            print(f"Element to columns mapping: {element_to_columns}")
 
             dec = int(self.pivot_tab.decimal_places.currentText())
             self.pivot_tab._inline_crm_rows.clear()
@@ -57,38 +82,53 @@ class CRMManager:
             for _, row in crm_rows.iterrows():
                 label = row['Solution Label']
                 print(f"Processing label: {label}")
-                # Regex: Match CRM, par, or OREAS followed by digits and optional letter
-                m = re.search(r'(?i)(?:CRM|par|OREAS)\s*(\d+[a-zA-Z]?)', str(label))
+                # Regex: Match digits and optional letter, possibly preceded by CRM/OREAS or followed by par
+                m = re.search(r'(?i)(?:CRM|OREAS)?\s*(\d+[a-zA-Z]?)(?:\s*par)?', str(label))
                 if not m:
                     self.logger.warning(f"No valid CRM ID found in label: {label}")
                     continue
                 crm_id_part = m.group(1)
                 crm_id_string = f"OREAS {crm_id_part}"
-                analysis_method = '4-Acid Digestion' if 'CRM' in str(label).upper() else 'Aqua Regia Digestion'
-                print(f"Querying CRM ID: {crm_id_string}, Analysis Method: {analysis_method}")
+                print(f"Querying CRM ID: {crm_id_string}")
 
-                # Query all possible CRM matches
+                # Query pivot_crm for matching CRM ID
                 cursor.execute(
-                    "SELECT [CRM ID], [Element], [Sort Grade] FROM crm WHERE [CRM ID] LIKE ? AND [Analysis Method] = ?",
-                    (f"OREAS {crm_id_part}%", analysis_method)
+                    "SELECT * FROM pivot_crm WHERE [CRM ID] LIKE ?",
+                    (f"OREAS {crm_id_part}%",)
                 )
-                all_crm_data = cursor.fetchall()
-                print(f"Partial match results for OREAS {crm_id_part}%: {all_crm_data}")
-                if not all_crm_data:
-                    self.logger.warning(f"No CRM data found for {crm_id_string} or partial matches with {analysis_method}")
+                crm_data = cursor.fetchall()
+                print(f"Partial match results for OREAS {crm_id_part}%: {crm_data}")
+                if not crm_data:
+                    self.logger.warning(f"No CRM data found for {crm_id_string} or partial matches")
                     continue
+
+                # Get column names for the pivoted data
+                cursor.execute("PRAGMA table_info(pivot_crm)")
+                db_columns = [x[1] for x in cursor.fetchall()]
+                non_element_columns = ['CRM ID', 'Solution Label', 'Analysis Method', 'Type']
 
                 # Group by CRM ID
                 crm_options = {}
-                for crm_id, element_full, sort_grade in all_crm_data:
-                    if crm_id not in crm_options:
-                        crm_options[crm_id] = []
-                    symbol = element_full.split(',')[-1].strip() if ',' in element_full else element_full.split()[-1].strip()
-                    try:
-                        crm_options[crm_id].append((symbol, float(sort_grade)))
-                    except (ValueError, TypeError):
-                        self.logger.warning(f"Invalid sort_grade for {symbol}: {sort_grade}")
-                        continue
+                for row in crm_data:
+                    crm_id = row[db_columns.index('CRM ID')]
+                    crm_options[crm_id] = []
+                    for col in db_columns:
+                        if col in non_element_columns:
+                            continue
+                        value = row[db_columns.index(col)]
+                        if value is not None and value != '':
+                            try:
+                                # Extract element symbol (e.g., 'Cu' or 'Fe')
+                                symbol = col.split('_')[0].strip()
+                                # If column is an oxide, map to element
+                                for el, (oxide_formula, _) in oxide_factors.items():
+                                    if col == oxide_formula:
+                                        symbol = el
+                                        break
+                                crm_options[crm_id].append((symbol, float(value)))
+                            except (ValueError, TypeError):
+                                self.logger.warning(f"Invalid value for {col}: {value}")
+                                continue
 
                 # If multiple CRMs, show dialog for user selection
                 selected_crm_id = crm_id_string
@@ -107,9 +147,9 @@ class CRMManager:
                     layout.addWidget(confirm_btn)
 
                     def on_confirm():
+                        nonlocal selected_crm_id
                         for rb in radio_buttons:
                             if rb.isChecked():
-                                nonlocal selected_crm_id
                                 selected_crm_id = rb.text()
                                 break
                         dialog.accept()
@@ -127,28 +167,34 @@ class CRMManager:
                 crm_dict = {symbol: grade for symbol, grade in crm_data}
                 print(f"CRM Dict: {crm_dict}")
 
-                # Map CRM values to pivot_data columns
+                # Map CRM values to pivot_data columns using element-to-wavelength mapping
                 crm_values = {'Solution Label': selected_crm_id}
-                for col in self.pivot_tab.pivot_data.columns:
-                    if col == 'Solution Label':
-                        continue
-                    # اگر اکسید فعال است، از فرمول اکسید استفاده می‌کنیم
-                    if self.pivot_tab.use_oxide_var.isChecked():
-                        for el, (oxide_formula, factor) in oxide_factors.items():
-                            if col == oxide_formula:
-                                element_symbol = el
-                                if element_symbol in crm_dict:
-                                    crm_values[col] = crm_dict[element_symbol] * factor
-                                break
+                for element, columns in element_to_columns.items():
+                    if element in crm_dict:
+                        value = crm_dict[element]
+                        if self.pivot_tab.use_oxide_var.isChecked():
+                            # Apply oxide factor if column is an oxide formula
+                            for col in columns:
+                                for el, (oxide_formula, factor) in oxide_factors.items():
+                                    if col == oxide_formula and element == el:
+                                        crm_values[col] = value * factor
+                                        print(f"Matched oxide {col} to {element}, value: {crm_values[col]}")
+                                        break
+                                else:
+                                    crm_values[col] = value
+                                    print(f"Matched {col} to {element}, value: {value}")
+                        else:
+                            # Assign value to all wavelength columns for the element
+                            for col in columns:
+                                crm_values[col] = value
+                                print(f"Matched {col} to {element}, value: {value}")
                     else:
-                        element_symbol = col.split()[0].split('_')[0]
-                        if element_symbol in crm_dict:
-                            crm_values[col] = crm_dict[element_symbol]
-                print(f"CRM Values: {crm_values}")
+                        print(f"No match for element {element} in crm_dict")
 
+                print(f"CRM Values: {crm_values}")
                 # Only add if there are values beyond Solution Label
                 if len(crm_values) > 1:
-                    self.pivot_tab._inline_crm_rows[label] = [crm_values]  # Single CRM entry
+                    self.pivot_tab._inline_crm_rows[label] = [crm_values]
                     self.pivot_tab.included_crms[label] = QCheckBox(label, checked=True)
                 else:
                     self.logger.warning(f"No matching elements for {selected_crm_id}, crm_values: {crm_values}")
@@ -204,7 +250,7 @@ class CRMManager:
                     (self.pivot_tab.original_df['Type'].isin(['Sample', 'Samp']))
                 ]
                 for _, row in sample_rows.iterrows():
-                    element = row['Element'].split('_')[0].split()[0]
+                    element = row['Element'].split('_')[0].strip()
                     element_params[element] = {
                         'Act Vol': row['Act Vol'] if has_act_vol else 1.0,
                         'Act Wgt': row['Act Wgt'] if has_act_wg else 1.0,
@@ -224,7 +270,7 @@ class CRMManager:
                             crm_row_list.append("")
                         else:
                             try:
-                                element_symbol = col
+                                element_symbol = col.split()[0].strip()
                                 if self.pivot_tab.use_oxide_var.isChecked():
                                     for el, (oxide_formula, _) in oxide_factors.items():
                                         if col == oxide_formula:
@@ -268,7 +314,7 @@ class CRMManager:
                         crm_val = d.get(col, None)
                         if pivot_val is not None and crm_val is not None:
                             try:
-                                element_symbol = col
+                                element_symbol = col.split()[0].strip()
                                 if self.pivot_tab.use_oxide_var.isChecked():
                                     for el, (oxide_formula, _) in oxide_factors.items():
                                         if col == oxide_formula:
