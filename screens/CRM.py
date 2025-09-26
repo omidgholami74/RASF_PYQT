@@ -1,119 +1,18 @@
 import sys
-import os
-import platform
 import pandas as pd
 import sqlite3
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, QTableView,
     QFrame, QScrollArea, QGridLayout, QDialog, QMessageBox, QHeaderView,
-    QLineEdit, QCheckBox, QScrollBar, QAbstractItemView
+    QLineEdit, QAbstractItemView
 )
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex
-from PyQt6.QtGui import QFont, QStandardItemModel, QStandardItem, QColor, QPalette
+from PyQt6.QtGui import QFont
 
 # Setup logging
 import logging
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-
-# Global stylesheet
-global_style = """
-    QWidget {
-        background-color: white;
-        font: 12px 'Segoe UI';
-    }
-    QDialog {
-        background-color: white;
-        border: 1px solid #cccccc;
-        border-radius: 4px;
-    }
-    QPushButton {
-        background-color: #f5f5f5;
-        color: black;
-        border: 1px solid #ccc;
-        border-radius: 4px;
-        padding: 8px 12px;
-        font: bold 11px 'Segoe UI';
-        min-width: 110px;
-        min-height: 32px;
-    }
-    QPushButton:hover {
-        background-color: #e0e0e0;
-        border: 1px solid #aaa;
-    }
-    QPushButton:pressed {
-        background-color: #d0d0d0;
-    }
-    QComboBox {
-        background-color: white;
-        color: black;
-        border: 1px solid #ccc;
-        border-radius: 4px;
-        padding: 8px;
-        font: 11px 'Segoe UI';
-    }
-    QComboBox:hover {
-        border: 1px solid #aaa;
-    }
-    QComboBox QAbstractItemView {
-        background-color: white;
-        color: black;
-        selection-background-color: #e0e0e0;
-        selection-color: black;
-        border: 1px solid #ccc;
-        border-radius: 4px;
-    }
-    QLineEdit {
-        background-color: white;
-        color: black;
-        border: 1px solid #ccc;
-        border-radius: 4px;
-        padding: 8px;
-        font: 11px 'Segoe UI';
-    }
-    QLineEdit:focus {
-        border: 1px solid #0078d4;
-    }
-    QTableView {
-        background-color: white;
-        alternate-background-color: #f9f9f9;
-        border: 1px solid #ccc;
-        font: 11px 'Segoe UI';
-        selection-background-color: #ADD8E6;
-        selection-color: black;
-        gridline-color: #e0e0e0;
-    }
-    QHeaderView::section {
-        background-color: #e0e0e0;
-        color: black;
-        border: 1px solid #ccc;
-        padding: 6px;
-        font: bold 11px 'Segoe UI';
-    }
-    QHeaderView::section:hover {
-        background-color: #d0d0d0;
-    }
-    QScrollArea {
-        background-color: white;
-        border: none;
-    }
-    QScrollBar:vertical, QScrollBar:horizontal {
-        background: #f0f0f0;
-        border: 1px solid #ccc;
-        border-radius: 3px;
-    }
-    QScrollBar::handle {
-        background: #aaaaaa;
-        border-radius: 3px;
-    }
-    QScrollBar::handle:hover {
-        background: #888888;
-    }
-    QLabel {
-        color: black;
-        font: 12px 'Segoe UI';
-    }
-"""
 
 class CRMTableModel(QAbstractTableModel):
     """Custom model for QTableView to display CRM data efficiently."""
@@ -151,9 +50,6 @@ class CRMTableModel(QAbstractTableModel):
                     return "" if pd.isna(value) else str(value)
             return str(value) if pd.notna(value) else ""
         
-        elif role == Qt.ItemDataRole.BackgroundRole:
-            return QColor("#f9f9f9") if index.row() % 2 == 0 else QColor("white")
-        
         elif role == Qt.ItemDataRole.TextAlignmentRole:
             return Qt.AlignmentFlag.AlignLeft if col_name == 'CRM ID' else Qt.AlignmentFlag.AlignCenter
 
@@ -167,7 +63,7 @@ class CRMTableModel(QAbstractTableModel):
         return None
 
 class FreezeTableWidget(QTableView):
-    """Custom QTableView with a frozen first column"""
+    """Custom QTableView with a frozen first column."""
     def __init__(self, model, parent=None):
         super().__init__(parent)
         self.frozenTableView = QTableView(self)
@@ -175,7 +71,6 @@ class FreezeTableWidget(QTableView):
         self.frozenTableView.setModel(model)
         self.init()
 
-        # Connect signals for synchronized scrolling and resizing
         self.horizontalHeader().sectionResized.connect(self.updateSectionWidth)
         self.verticalHeader().sectionResized.connect(self.updateSectionHeight)
         self.frozenTableView.verticalScrollBar().valueChanged.connect(self.frozenVerticalScroll)
@@ -186,10 +81,8 @@ class FreezeTableWidget(QTableView):
         self.frozenTableView.verticalHeader().hide()
         self.frozenTableView.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         self.viewport().stackUnder(self.frozenTableView)
-        self.frozenTableView.setStyleSheet(global_style)
         self.frozenTableView.setSelectionModel(self.selectionModel())
         
-        # Hide all columns except the first one in the frozen table
         for col in range(self.model().columnCount()):
             self.frozenTableView.setColumnHidden(col, col != 0)
         self.frozenTableView.setColumnWidth(0, self.columnWidth(0))
@@ -200,26 +93,21 @@ class FreezeTableWidget(QTableView):
         self.frozenTableView.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerItem)
         self.updateFrozenTableGeometry()
         self.frozenTableView.show()
-        self.frozenTableView.viewport().repaint()
 
     def updateSectionWidth(self, logicalIndex, oldSize, newSize):
         if logicalIndex == 0:
             self.frozenTableView.setColumnWidth(0, newSize)
             self.updateFrozenTableGeometry()
-            self.frozenTableView.viewport().repaint()
 
     def updateSectionHeight(self, logicalIndex, oldSize, newSize):
         self.frozenTableView.setRowHeight(logicalIndex, newSize)
-        self.frozenTableView.viewport().repaint()
 
     def frozenVerticalScroll(self, value):
         self.verticalScrollBar().setValue(value)
-        self.frozenTableView.viewport().repaint()
         self.viewport().update()
 
     def mainVerticalScroll(self, value):
         self.frozenTableView.verticalScrollBar().setValue(value)
-        self.frozenTableView.viewport().repaint()
         self.viewport().update()
 
     def updateFrozenTableGeometry(self):
@@ -229,12 +117,10 @@ class FreezeTableWidget(QTableView):
             self.columnWidth(0),
             self.viewport().height() + self.horizontalHeader().height()
         )
-        self.frozenTableView.viewport().repaint()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.updateFrozenTableGeometry()
-        self.frozenTableView.viewport().repaint()
 
     def moveCursor(self, cursorAction, modifiers):
         current = super().moveCursor(cursorAction, modifiers)
@@ -248,16 +134,14 @@ class FreezeTableWidget(QTableView):
     def scrollTo(self, index, hint=QAbstractItemView.ScrollHint.EnsureVisible):
         if index.column() > 0:
             super().scrollTo(index, hint)
-        self.frozenTableView.viewport().repaint()
 
 class CRMTab(QWidget):
-    """CRMTab for managing CRM data with SQLite and pivot table display."""
+    """CRMTab for managing pivoted CRM data with SQLite."""
     def __init__(self, app, parent_frame):
         super().__init__(parent_frame)
         self.app = app
         self.parent_frame = parent_frame
         self.conn = None
-        self.crm_data = None
         self.pivot_data = None
         self.table_view = None
         self.search_var = QLineEdit()
@@ -267,58 +151,54 @@ class CRMTab(QWidget):
         self.sort_column = None
         self.sort_reverse = False
         self.ui_initialized = False
-        self.setStyleSheet(global_style)
         self.setup_ui()
         self.init_db()
 
     def setup_ui(self):
         """Setup UI with controls and placeholder."""
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(10, 10, 10, 10)  # Increased margins for breathing room
-        main_layout.setSpacing(10)  # Slightly larger spacing for clarity
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
 
         # Control frame
         control_frame = QFrame()
         control_layout = QHBoxLayout(control_frame)
-        control_layout.setContentsMargins(6, 6, 6, 6)
-        control_layout.setSpacing(12)
+        control_layout.setContentsMargins(5, 5, 5, 5)
+        control_layout.setSpacing(10)
 
         # Analysis Method Filter
-        control_layout.addWidget(QLabel("Analysis Method:", font=QFont("Segoe UI", 11)))
-        self.filter_var.setFixedWidth(180)
-        self.filter_var.setToolTip("Filter by analysis method")
+        control_layout.addWidget(QLabel("Analysis Method:"))
+        self.filter_var.setFixedWidth(150)
         self.filter_var.currentTextChanged.connect(self.update_display)
         control_layout.addWidget(self.filter_var)
 
         # Decimal Places
-        control_layout.addWidget(QLabel("Decimals:", font=QFont("Segoe UI", 11)))
+        control_layout.addWidget(QLabel("Decimals:"))
         self.decimal_places.addItems(["0", "1", "2", "3"])
         self.decimal_places.setCurrentText("2")
-        self.decimal_places.setFixedWidth(80)
-        self.decimal_places.setToolTip("Set decimal places for numeric values")
+        self.decimal_places.setFixedWidth(60)
         self.decimal_places.currentTextChanged.connect(self.update_display)
         control_layout.addWidget(self.decimal_places)
 
         # Search Field
         self.search_var.setPlaceholderText("Search by any field...")
-        self.search_var.setFixedWidth(180)
-        self.search_var.setToolTip("Search across all columns")
+        self.search_var.setFixedWidth(150)
         self.search_var.textChanged.connect(self.update_display)
         control_layout.addWidget(self.search_var)
 
         # CRUD Buttons
         add_btn = QPushButton("Add Record")
-        add_btn.setToolTip("Add a new CRM record")
+        add_btn.setFixedSize(100, 30)
         add_btn.clicked.connect(self.open_add_window)
         control_layout.addWidget(add_btn)
 
         edit_btn = QPushButton("Edit Record")
-        edit_btn.setToolTip("Edit the selected record")
+        edit_btn.setFixedSize(100, 30)
         edit_btn.clicked.connect(self.open_edit_window)
         control_layout.addWidget(edit_btn)
 
         delete_btn = QPushButton("Delete Selected")
-        delete_btn.setToolTip("Delete the selected record")
+        delete_btn.setFixedSize(100, 30)
         delete_btn.clicked.connect(self.delete_selected)
         control_layout.addWidget(delete_btn)
 
@@ -326,47 +206,35 @@ class CRMTab(QWidget):
         main_layout.addWidget(control_frame)
 
         # Placeholder label
-        self.placeholder_label = QLabel("Click 'Display' to load data.", font=QFont("Segoe UI", 12))
+        self.placeholder_label = QLabel("Click 'Display' to load data.")
         self.placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.placeholder_label.setStyleSheet("color: #666666;")
         main_layout.addWidget(self.placeholder_label)
-
-        # Apply styles
-        palette = QPalette()
-        palette.setColor(QPalette.ColorRole.Window, QColor("white"))
-        self.setPalette(palette)
 
     def setup_full_ui(self):
         """Setup full UI with QTableView and frozen first column."""
         if self.ui_initialized:
             return
 
-        # Remove placeholder
         if self.placeholder_label:
             self.placeholder_label.deleteLater()
             self.placeholder_label = None
 
-        # Table container
         table_container = QFrame()
         table_layout = QVBoxLayout(table_container)
         table_layout.setContentsMargins(0, 0, 0, 0)
         table_layout.setSpacing(0)
 
-        # Initialize table view with frozen first column
         self.table_view = FreezeTableWidget(CRMTableModel(self))
         self.table_view.setAlternatingRowColors(True)
         self.table_view.setSelectionMode(QTableView.SelectionMode.SingleSelection)
         self.table_view.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self.table_view.setSortingEnabled(True)
-        self.table_view.setFont(QFont("Segoe UI", 11))
-        self.table_view.horizontalHeader().setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
         self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.table_view.horizontalHeader().setMinimumSectionSize(100)
         self.table_view.horizontalHeader().setStretchLastSection(True)
         self.table_view.verticalHeader().setVisible(False)
         self.table_view.setEnabled(True)
         self.table_view.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.table_view.setStyleSheet(global_style)
         self.table_view.setShowGrid(True)
         table_layout.addWidget(self.table_view)
 
@@ -385,17 +253,16 @@ class CRMTab(QWidget):
             QMessageBox.warning(self, "Error", f"Failed to connect to database:\n{str(e)}")
 
     def load_and_display(self):
-        """Load data from SQLite or Excel and display pivot table."""
+        """Load data from SQLite and display pivot table."""
+        if self.conn is None:
+            self.init_db()
+
         try:
-            if self.conn is None:
-                self.init_db()
             cursor = self.conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='crm'")
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='pivot_crm'")
             if not cursor.fetchone():
-                excel_data = pd.read_excel("data crm.xlsx")
-                excel_data.to_sql("crm", self.conn, if_exists="replace", index=False)
-                logger.info("Excel data loaded into SQLite database")
-                self.conn.commit()
+                QMessageBox.warning(self, "Warning", "Pivot table not found in database. Run the pivot script to initialize.")
+                return
 
             self.setup_full_ui()
             self.update_filter_options()
@@ -413,7 +280,7 @@ class CRMTab(QWidget):
 
         try:
             cursor = self.conn.cursor()
-            cursor.execute("SELECT DISTINCT [Analysis Method] FROM crm WHERE [Analysis Method] IS NOT NULL")
+            cursor.execute("SELECT DISTINCT [Analysis Method] FROM pivot_crm WHERE [Analysis Method] IS NOT NULL")
             unique_methods = ["All"] + sorted([row[0] for row in cursor.fetchall()])
             self.filter_var.clear()
             self.filter_var.addItems(unique_methods)
@@ -426,20 +293,20 @@ class CRMTab(QWidget):
             self.filter_var.setCurrentText("All")
 
     def update_display(self, event=None):
-        """Update QTableView display with pivot table data."""
+        """Update QTableView display with pivot table data from 'pivot_crm'."""
         if self.conn is None:
             self._set_status_table("No data loaded")
             return
 
         try:
             cursor = self.conn.cursor()
-            query = "SELECT * FROM crm"
+            query = "SELECT * FROM pivot_crm"
             conditions = []
             params = []
             search_text = self.search_var.text().lower()
             filter_method = self.filter_var.currentText()
 
-            cursor.execute("PRAGMA table_info(crm)")
+            cursor.execute("PRAGMA table_info(pivot_crm)")
             columns = [info[1] for info in cursor.fetchall()]
 
             if search_text:
@@ -459,38 +326,15 @@ class CRMTab(QWidget):
                 self._set_status_table("No data after filtering")
                 return
 
-            # Process Element column to keep only the part after the comma
-            if 'Element' in df.columns:
-                df['Element'] = df['Element'].apply(lambda x: x.split(', ')[-1].strip() if isinstance(x, str) and ', ' in x else x)
-
-            # Create pivot table
-            required_columns = {'CRM ID', 'Element', 'Sort Grade'}
-            if not required_columns.issubset(df.columns):
-                self._set_status_table("Missing required columns")
-                return
-
-            # Aggregate to avoid duplicates
-            aggregated_df = df.groupby(['CRM ID', 'Element'])['Sort Grade'].first().reset_index()
-
-            # Pivot table
-            pivot_df = pd.pivot_table(
-                aggregated_df,
-                index='CRM ID',
-                columns='Element',
-                values='Sort Grade',
-                aggfunc='first'
-            ).reset_index()
-
-            self.pivot_data = pivot_df
-            pivot_df.to_csv('pivot_crm.csv')
-            model = CRMTableModel(self, pivot_df, decimal_places=int(self.decimal_places.currentText()))
+            self.pivot_data = df
+            df.to_csv('pivot_crm.csv')
+            model = CRMTableModel(self, df, decimal_places=int(self.decimal_places.currentText()))
             self.table_view.setModel(model)
             self.table_view.frozenTableView.setModel(model)
             
-            # Set column widths
-            for col_idx, col in enumerate(pivot_df.columns):
-                max_width = max([len(str(x)) for x in pivot_df[col].dropna()] + [len(str(col))], default=10)
-                pixel_width = min(max_width * 8, 160)
+            for col_idx, col in enumerate(df.columns):
+                max_width = max([len(str(x)) for x in df[col].dropna()] + [len(str(col))], default=10)
+                pixel_width = min(max_width * 9, 150)
                 self.column_widths[col] = pixel_width
                 self.table_view.setColumnWidth(col_idx, pixel_width)
                 if col_idx == 0:
@@ -506,127 +350,41 @@ class CRMTab(QWidget):
     def _set_status_table(self, text):
         """Set status message in the table."""
         self.table_view.setModel(None)
-        self.status_label = QLabel(text, font=QFont("Segoe UI", 12))
+        self.status_label = QLabel(text)
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout = self.layout()
         layout.addWidget(self.status_label)
 
-    def open_search_window(self):
-        """Open a window for search input."""
-        if self.conn is None:
-            QMessageBox.warning(self, "Warning", "No data to search!")
-            return
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Search CRM Table")
-        dialog.setGeometry(200, 200, 300, 150)
-        dialog.setModal(True)
-        dialog.setStyleSheet(global_style)
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(12)
-
-        layout.addWidget(QLabel("Search:", font=QFont("Segoe UI", 11)))
-        search_entry = QLineEdit()
-        search_entry.setText(self.search_var.text())
-        search_entry.setFont(QFont("Segoe UI", 11))
-        search_entry.setToolTip("Enter search term")
-        search_entry.textChanged.connect(lambda text: self.search_var.setText(text))
-        layout.addWidget(search_entry)
-
-        button_layout = QHBoxLayout()
-        button_layout.setSpacing(12)
-        search_btn = QPushButton("Search")
-        search_btn.setFixedSize(120, 34)
-        search_btn.setToolTip("Apply search filter")
-        search_btn.clicked.connect(self.update_display)
-        button_layout.addWidget(search_btn)
-
-        close_btn = QPushButton("Close")
-        close_btn.setFixedSize(120, 34)
-        close_btn.setToolTip("Close this dialog")
-        close_btn.clicked.connect(dialog.accept)
-        button_layout.addWidget(close_btn)
-
-        layout.addLayout(button_layout)
-        dialog.exec()
-
-    def open_filter_window(self):
-        """Open a window for Analysis Method filter."""
-        if self.conn is None:
-            QMessageBox.warning(self, "Warning", "No data to filter!")
-            return
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Filter Analysis Method")
-        dialog.setGeometry(200, 200, 300, 150)
-        dialog.setModal(True)
-        dialog.setStyleSheet(global_style)
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(12)
-
-        layout.addWidget(QLabel("Select Analysis Method:", font=QFont("Segoe UI", 11)))
-        filter_combo = QComboBox()
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT DISTINCT [Analysis Method] FROM crm WHERE [Analysis Method] IS NOT NULL")
-        unique_methods = ["All"] + sorted([row[0] for row in cursor.fetchall()])
-        filter_combo.addItems(unique_methods)
-        filter_combo.setFont(QFont("Segoe UI", 11))
-        filter_combo.setCurrentText(self.filter_var.currentText())
-        filter_combo.setToolTip("Select an analysis method to filter")
-        filter_combo.currentTextChanged.connect(lambda text: self.filter_var.setCurrentText(text))
-        layout.addWidget(filter_combo)
-
-        button_layout = QHBoxLayout()
-        button_layout.setSpacing(12)
-        apply_btn = QPushButton("Apply")
-        apply_btn.setFixedSize(120, 34)
-        apply_btn.setToolTip("Apply the selected filter")
-        apply_btn.clicked.connect(self.update_display)
-        button_layout.addWidget(apply_btn)
-
-        close_btn = QPushButton("Close")
-        close_btn.setFixedSize(120, 34)
-        close_btn.setToolTip("Close this dialog")
-        close_btn.clicked.connect(dialog.accept)
-        button_layout.addWidget(close_btn)
-
-        layout.addLayout(button_layout)
-        dialog.exec()
-
     def open_add_window(self):
-        """Open a window to add a new record."""
+        """Open a window to add a new record to 'pivot_crm'."""
         if self.conn is None:
             QMessageBox.warning(self, "Warning", "No database connection!")
             return
 
         dialog = QDialog(self)
-        dialog.setWindowTitle("Add New CRM Record")
-        dialog.setGeometry(200, 200, 380, 540)
+        dialog.setWindowTitle("Add New Pivoted CRM Record")
+        dialog.setGeometry(200, 200, 400, 500)
         dialog.setModal(True)
-        dialog.setStyleSheet(global_style)
         layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(14)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
 
         cursor = self.conn.cursor()
-        cursor.execute("PRAGMA table_info(crm)")
+        cursor.execute("PRAGMA table_info(pivot_crm)")
         columns = [info[1] for info in cursor.fetchall()]
         entry_vars = {col: QLineEdit() for col in columns}
 
         scroll_area = QScrollArea()
         scroll_widget = QWidget()
         grid_layout = QGridLayout(scroll_widget)
-        grid_layout.setContentsMargins(6, 6, 6, 6)
+        grid_layout.setContentsMargins(5, 5, 5, 5)
         grid_layout.setSpacing(10)
         for i, col in enumerate(columns):
-            label = QLabel(f"{col}:", font=QFont("Segoe UI", 11))
-            label.setFixedWidth(160)
+            label = QLabel(f"{col}:")
+            label.setFixedWidth(150)
             grid_layout.addWidget(label, i, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
             entry = entry_vars[col]
             entry.setFixedWidth(180)
-            entry.setToolTip(f"Enter value for {col}")
             grid_layout.addWidget(entry, i, 1)
 
         scroll_widget.setLayout(grid_layout)
@@ -635,16 +393,14 @@ class CRMTab(QWidget):
         layout.addWidget(scroll_area)
 
         button_layout = QHBoxLayout()
-        button_layout.setSpacing(12)
+        button_layout.setSpacing(10)
         save_btn = QPushButton("Save")
-        save_btn.setFixedSize(120, 34)
-        save_btn.setToolTip("Save the new record")
+        save_btn.setFixedSize(100, 30)
         save_btn.clicked.connect(lambda: self.save_record(entry_vars, dialog))
         button_layout.addWidget(save_btn)
 
         cancel_btn = QPushButton("Cancel")
-        cancel_btn.setFixedSize(120, 34)
-        cancel_btn.setToolTip("Cancel and close")
+        cancel_btn.setFixedSize(100, 30)
         cancel_btn.clicked.connect(dialog.accept)
         button_layout.addWidget(cancel_btn)
 
@@ -652,15 +408,16 @@ class CRMTab(QWidget):
         dialog.exec()
 
     def save_record(self, entry_vars, dialog):
+        """Save new record to 'pivot_crm'."""
         try:
             cursor = self.conn.cursor()
-            cursor.execute("PRAGMA table_info(crm)")
+            cursor.execute("PRAGMA table_info(pivot_crm)")
             columns = [info[1] for info in cursor.fetchall()]
             values = [entry_vars[col].text() or None for col in columns]
-            query = f"INSERT INTO crm ({', '.join(f'[{col}]' for col in columns)}) VALUES ({', '.join(['?'] * len(columns))})"
+            query = f"INSERT INTO pivot_crm ({', '.join(f'[{col}]' for col in columns)}) VALUES ({', '.join(['?'] * len(columns))})"
             cursor.execute(query, values)
             self.conn.commit()
-            logger.info("Added new record to crm table")
+            logger.info("Added new record to pivot_crm table")
             self.update_display()
             QMessageBox.information(dialog, "Success", "Record added successfully!")
             dialog.accept()
@@ -669,13 +426,12 @@ class CRMTab(QWidget):
             QMessageBox.warning(dialog, "Error", f"Failed to add record:\n{str(e)}")
 
     def open_edit_window(self):
-        """Open a window to edit the selected record."""
+        """Open a window to edit the selected record in 'pivot_crm'."""
         if self.conn is None:
             QMessageBox.warning(self, "Warning", "No database connection!")
             return
 
         selected = self.table_view.selectionModel().selectedRows()
-        logger.debug(f"Selected rows: {len(selected)}")
         if not selected:
             QMessageBox.warning(self, "Warning", "Please select a record to edit!")
             return
@@ -683,34 +439,34 @@ class CRMTab(QWidget):
             QMessageBox.warning(self, "Warning", "Please select only one record to edit!")
             return
 
+        row = selected[0].row()
+        id_value = self.table_view.model().data(self.table_view.model().index(row, 0))
+
         dialog = QDialog(self)
-        dialog.setWindowTitle("Edit CRM Record")
-        dialog.setGeometry(200, 200, 380, 540)
+        dialog.setWindowTitle("Edit Pivoted CRM Record")
+        dialog.setGeometry(200, 200, 400, 500)
         dialog.setModal(True)
-        dialog.setStyleSheet(global_style)
         layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(14)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
 
         cursor = self.conn.cursor()
-        cursor.execute("PRAGMA table_info(crm)")
-        columns = [info[1] for info in cursor.fetchall()]
-        row = selected[0].row()
-        values = [self.table_view.model().data(self.table_view.model().index(row, i)) for i in range(self.table_view.model().columnCount())]
-        entry_vars = {col: QLineEdit(str(values[i]) if values[i] is not None else "") for i, col in enumerate(columns)}
+        cursor.execute("SELECT * FROM pivot_crm WHERE [CRM ID] = ?", (id_value,))
+        record = cursor.fetchone()
+        columns = [desc[0] for desc in cursor.description]
+        entry_vars = {col: QLineEdit(str(record[i]) if record[i] is not None else "") for i, col in enumerate(columns)}
 
         scroll_area = QScrollArea()
         scroll_widget = QWidget()
         grid_layout = QGridLayout(scroll_widget)
-        grid_layout.setContentsMargins(6, 6, 6, 6)
+        grid_layout.setContentsMargins(5, 5, 5, 5)
         grid_layout.setSpacing(10)
         for i, col in enumerate(columns):
-            label = QLabel(f"{col}:", font=QFont("Segoe UI", 11))
-            label.setFixedWidth(160)
+            label = QLabel(f"{col}:")
+            label.setFixedWidth(150)
             grid_layout.addWidget(label, i, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
             entry = entry_vars[col]
             entry.setFixedWidth(180)
-            entry.setToolTip(f"Edit value for {col}")
             grid_layout.addWidget(entry, i, 1)
 
         scroll_widget.setLayout(grid_layout)
@@ -719,16 +475,14 @@ class CRMTab(QWidget):
         layout.addWidget(scroll_area)
 
         button_layout = QHBoxLayout()
-        button_layout.setSpacing(12)
+        button_layout.setSpacing(10)
         save_btn = QPushButton("Save")
-        save_btn.setFixedSize(120, 34)
-        save_btn.setToolTip("Save changes")
-        save_btn.clicked.connect(lambda: self.save_edit(entry_vars, values[0], dialog))
+        save_btn.setFixedSize(100, 30)
+        save_btn.clicked.connect(lambda: self.save_edit(entry_vars, id_value, dialog))
         button_layout.addWidget(save_btn)
 
         cancel_btn = QPushButton("Cancel")
-        cancel_btn.setFixedSize(120, 34)
-        cancel_btn.setToolTip("Cancel and close")
+        cancel_btn.setFixedSize(100, 30)
         cancel_btn.clicked.connect(dialog.accept)
         button_layout.addWidget(cancel_btn)
 
@@ -736,16 +490,17 @@ class CRMTab(QWidget):
         dialog.exec()
 
     def save_edit(self, entry_vars, id_value, dialog):
+        """Save edited record to 'pivot_crm'."""
         try:
             cursor = self.conn.cursor()
-            cursor.execute("PRAGMA table_info(crm)")
+            cursor.execute("PRAGMA table_info(pivot_crm)")
             columns = [info[1] for info in cursor.fetchall()]
-            set_clause = ", ".join(f"[{col}] = ?" for col in columns[1:])
-            query = f"UPDATE crm SET {set_clause} WHERE [{columns[0]}] = ?"
-            update_values = [entry_vars[col].text() or None for col in columns[1:]] + [id_value]
+            set_clause = ", ".join(f"[{col}] = ?" for col in columns if col != 'CRM ID')
+            query = f"UPDATE pivot_crm SET {set_clause} WHERE [CRM ID] = ?"
+            update_values = [entry_vars[col].text() or None for col in columns if col != 'CRM ID'] + [id_value]
             cursor.execute(query, update_values)
             self.conn.commit()
-            logger.info(f"Updated record with {columns[0]} = {id_value}")
+            logger.info(f"Updated record with CRM ID = {id_value}")
             self.update_display()
             QMessageBox.information(dialog, "Success", "Record updated successfully!")
             dialog.accept()
@@ -754,7 +509,7 @@ class CRMTab(QWidget):
             QMessageBox.warning(dialog, "Error", f"Failed to update record:\n{str(e)}")
 
     def delete_selected(self):
-        """Delete selected records from the database."""
+        """Delete selected records from 'pivot_crm'."""
         if self.conn is None:
             QMessageBox.warning(self, "Warning", "No database connection!")
             return
@@ -764,17 +519,15 @@ class CRMTab(QWidget):
             QMessageBox.warning(self, "Warning", "Please select at least one record to delete!")
             return
 
-        if not QMessageBox.question(self, "Confirm Delete", "Are you sure you want to delete the selected records?") == QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(self, "Confirm Delete", "Are you sure you want to delete the selected records?") != QMessageBox.StandardButton.Yes:
             return
 
         try:
             cursor = self.conn.cursor()
-            cursor.execute("PRAGMA table_info(crm)")
-            columns = [info[1] for info in cursor.fetchall()]
-            id_col = columns[0]
+            id_col = 'CRM ID'
             for row in selected:
                 id_value = self.table_view.model().data(self.table_view.model().index(row.row(), 0))
-                cursor.execute(f"DELETE FROM crm WHERE [{id_col}] = ?", (id_value,))
+                cursor.execute(f"DELETE FROM pivot_crm WHERE [{id_col}] = ?", (id_value,))
                 logger.info(f"Deleted record with {id_col} = {id_value}")
             self.conn.commit()
             self.update_display()
@@ -789,7 +542,6 @@ class CRMTab(QWidget):
             self.conn.close()
             logger.info("SQLite database connection closed")
         self.conn = None
-        self.crm_data = None
         self.pivot_data = None
         self.column_widths = {}
         self.search_var.clear()
