@@ -49,7 +49,7 @@ class PivotPlotDialog(QDialog):
         
         control_frame.addWidget(QLabel("Acceptable Range (%):"))
         self.range_combo = QComboBox()
-        self.range_combo.addItems(["5%", "10%"])
+        self.range_combo.addItems(["5%", "10%", "15%"])
         self.range_combo.setCurrentText("5%")
         self.range_combo.currentTextChanged.connect(lambda text: setattr(self, 'range_percent', int(text.replace('%', ''))) or self.update_plot())
         control_frame.addWidget(self.range_combo)
@@ -163,7 +163,7 @@ class PivotPlotDialog(QDialog):
             added_legend_names = set()
 
             def extract_crm_id(label):
-                m = re.search(r'(?i)(?:CRM|par|OREAS)[\s-]*(\d+[a-zA-Z]?)', str(label))
+                m = re.search(r'(?i)(?:\bCRM\b|\bOREAS\b)?[\s-]*(\d+[a-zA-Z]?)[\s-]*(?:\bpar\b)?', str(label))
                 return m.group(1) if m else str(label)
 
             element_name = self.selected_element.split()[0]
@@ -176,7 +176,6 @@ class PivotPlotDialog(QDialog):
                 (self.parent.original_df['Element'] == self.selected_element)
             ]['Soln Conc']
             self.logger.debug(f"Raw Std data for {self.selected_element}: {std_data.tolist()}")
-            # Filter and convert to floats
             std_data_numeric = []
             for x in std_data:
                 if self.is_numeric(x):
@@ -201,7 +200,6 @@ class PivotPlotDialog(QDialog):
                 (self.parent.original_df['Element'] == self.selected_element)
             ]['Soln Conc']
             self.logger.debug(f"Raw Sample data for {self.selected_element}: {sample_data.tolist()}")
-            # Filter and convert to floats
             sample_data_numeric = []
             for x in sample_data:
                 if self.is_numeric(x):
@@ -241,8 +239,7 @@ class PivotPlotDialog(QDialog):
 
             crm_labels = [
                 label for label in self.parent._inline_crm_rows_display.keys()
-                if ('CRM' in label.upper() or 'par' in label.lower())
-                and label not in blank_rows['Solution Label'].values
+                if label not in blank_rows['Solution Label'].values
                 and label in self.parent.included_crms and self.parent.included_crms[label].isChecked()
             ]
             self.logger.debug(f"CRM labels: {crm_labels}")
@@ -256,17 +253,23 @@ class PivotPlotDialog(QDialog):
 
             unique_crm_ids = sorted(crm_id_to_labels.keys())
             x_pos_map = {crm_id: i for i, crm_id in enumerate(unique_crm_ids)}
-            certificate_values = []
-            sample_values = []
-            corrected_sample_values = []
-            lower_bounds = []
-            upper_bounds = []
-            soln_concs = []
-            int_values = []
-            x_positions = []
+            certificate_values = {}
+            sample_values = {}
+            corrected_sample_values = {}
+            lower_bounds = {}
+            upper_bounds = {}
+            soln_concs = {}
+            int_values = {}
 
             for crm_id in unique_crm_ids:
-                x_pos = x_pos_map[crm_id]
+                certificate_values[crm_id] = []
+                sample_values[crm_id] = []
+                corrected_sample_values[crm_id] = []
+                lower_bounds[crm_id] = []
+                upper_bounds[crm_id] = []
+                soln_concs[crm_id] = []
+                int_values[crm_id] = []
+
                 for sol_label in crm_id_to_labels[crm_id]:
                     pivot_row = self.parent.pivot_data[self.parent.pivot_data['Solution Label'] == sol_label]
                     if pivot_row.empty:
@@ -282,7 +285,6 @@ class PivotPlotDialog(QDialog):
                         self.logger.warning(f"Non-numeric pivot value for {sol_label}: {pivot_val}")
                         pivot_val = 0
                     
-                    # Get Soln Conc and Int for the specific sol_label
                     sample_rows = self.parent.original_df[
                         (self.parent.original_df['Solution Label'] == sol_label) &
                         (self.parent.original_df['Element'].str.startswith(element_name)) &
@@ -389,17 +391,15 @@ class PivotPlotDialog(QDialog):
 
                                 self.annotations.append(annotation)
                                 
-                                x_positions.append(x_pos)
-                                certificate_values.append(crm_val)
-                                sample_values.append(pivot_val_float)
-                                corrected_sample_values.append(corrected_pivot)
-                                lower_bounds.append(lower)
-                                upper_bounds.append(upper)
-                                soln_concs.append(soln_conc)
-                                int_values.append(int_val)
-                            except ValueError as e:
-                                self.logger.error(f"ValueError in processing data for {sol_label}: {str(e)}")
-                                continue
+                                certificate_values[crm_id].append(crm_val)
+                                sample_values[crm_id].append(pivot_val_float)
+                                corrected_sample_values[crm_id].append(corrected_pivot)
+                                lower_bounds[crm_id].append(lower)
+                                upper_bounds[crm_id].append(upper)
+                                soln_concs[crm_id].append(soln_conc)
+                                int_values[crm_id].append(int_val)
+                            except:
+                                pass
 
             if not unique_crm_ids:
                 self.main_plot.clear()
@@ -412,58 +412,82 @@ class PivotPlotDialog(QDialog):
             self.main_plot.setLabel('left', f'{self.selected_element} Value')
             self.main_plot.setTitle(f'Verification Values for {self.selected_element}')
             self.main_plot.getAxis('bottom').setTicks([[(i, f'V {id}') for i, id in enumerate(unique_crm_ids)]])
-            y_values = certificate_values + sample_values + corrected_sample_values + lower_bounds + upper_bounds
-            if y_values:
-                y_min, y_max = min(y_values), max(y_values)
+            all_y_values = []
+            for crm_id in unique_crm_ids:
+                all_y_values.extend(certificate_values.get(crm_id, []))
+                all_y_values.extend(sample_values.get(crm_id, []))
+                all_y_values.extend(corrected_sample_values.get(crm_id, []))
+                all_y_values.extend(lower_bounds.get(crm_id, []))
+                all_y_values.extend(upper_bounds.get(crm_id, []))
+            if all_y_values:
+                y_min, y_max = min(all_y_values), max(all_y_values)
                 margin = (y_max - y_min) * 0.1
                 self.main_plot.setXRange(-0.5, len(unique_crm_ids) - 0.5)
                 self.main_plot.setYRange(y_min - margin, y_max + margin)
                 self.initial_ranges['main_x'] = (-0.5, len(unique_crm_ids) - 0.5)
                 self.initial_ranges['main_y'] = (y_min - margin, y_max + margin)
 
-            if self.show_check_crm.isChecked() and x_positions and certificate_values:
-                scatter = pg.PlotDataItem(
-                    x=x_positions, y=certificate_values, pen=None, symbol='o', symbolSize=8,
-                    symbolPen='r', symbolBrush='r', name='Certificate Value'
-                )
-                self.main_plot.addItem(scatter)
+            if self.show_check_crm.isChecked():
+                for crm_id in unique_crm_ids:
+                    x_pos = x_pos_map[crm_id]
+                    cert_vals = certificate_values.get(crm_id, [])
+                    if cert_vals:
+                        x_vals = [x_pos] * len(cert_vals)
+                        scatter = pg.PlotDataItem(
+                            x=x_vals, y=cert_vals, pen=None, symbol='o', symbolSize=8,
+                            symbolPen='g', symbolBrush='g'
+                        )
+                        self.main_plot.addItem(scatter)
                 if 'Certificate Value' not in added_legend_names:
+                    scatter = pg.PlotDataItem(
+                        x=[-10], y=[0], pen=None, symbol='o', symbolSize=8,
+                        symbolPen='g', symbolBrush='g', name='Certificate Value'
+                    )
                     self.legend.addItem(scatter, 'Certificate Value')
                     added_legend_names.add('Certificate Value')
                     self.logger.debug("Added Certificate Value to legend")
 
-            if self.show_pivot_crm.isChecked() and x_positions and sample_values:
-                for i in range(len(x_positions)):
+            if self.show_pivot_crm.isChecked():
+                for crm_id in unique_crm_ids:
+                    x_pos = x_pos_map[crm_id]
+                    samp_vals = sample_values.get(crm_id, [])
+                    if samp_vals:
+                        x_vals = [x_pos] * len(samp_vals)
+                        scatter = pg.PlotDataItem(
+                            x=x_vals, y=samp_vals, pen=None, symbol='t', symbolSize=8,
+                            symbolPen='b', symbolBrush='b'
+                        )
+                        self.main_plot.addItem(scatter)
+                if 'Sample Value' not in added_legend_names:
                     scatter = pg.PlotDataItem(
-                        x=[x_positions[i]], y=[sample_values[i]], pen=None, symbol='t', symbolSize=8,
-                        symbolPen='g', symbolBrush='g'
+                        x=[-10], y=[0], pen=None, symbol='t', symbolSize=8,
+                        symbolPen='b', symbolBrush='b', name='Sample Value'
                     )
-                    self.main_plot.addItem(scatter)
-                if 'None' not in added_legend_names:
-                    sample_scatter = pg.PlotDataItem(
-                        x=[x_positions[0]], y=[sample_values[0]], pen=None, symbol='t', symbolSize=8,
-                        symbolPen='g', symbolBrush='g', name='None'
-                    )
-                    self.legend.addItem(sample_scatter, 'None')
-                    added_legend_names.add('None')
-                    self.logger.debug("Added None to legend")
+                    self.legend.addItem(scatter, 'Sample Value')
+                    added_legend_names.add('Sample Value')
+                    self.logger.debug("Added Sample Value to legend")
 
-            if self.show_range.isChecked() and x_positions and lower_bounds and upper_bounds:
-                for i in range(len(x_positions)):
-                    line_lower = pg.PlotDataItem(
-                        x=[x_positions[i] - 0.2, x_positions[i] + 0.2], y=[lower_bounds[i], lower_bounds[i]],
-                        pen=pg.mkPen('g', width=2)
-                    )
-                    line_upper = pg.PlotDataItem(
-                        x=[x_positions[i] - 0.2, x_positions[i] + 0.2], y=[upper_bounds[i], upper_bounds[i]],
-                        pen=pg.mkPen('g', width=2)
-                    )
-                    self.main_plot.addItem(line_lower)
-                    self.main_plot.addItem(line_upper)
+            if self.show_range.isChecked():
+                for crm_id in unique_crm_ids:
+                    x_pos = x_pos_map[crm_id]
+                    low_bounds = lower_bounds.get(crm_id, [])
+                    up_bounds = upper_bounds.get(crm_id, [])
+                    if low_bounds and up_bounds:
+                        for low, up in zip(low_bounds, up_bounds):
+                            line_lower = pg.PlotDataItem(
+                                x=[x_pos - 0.2, x_pos + 0.2], y=[low, low],
+                                pen=pg.mkPen('r', width=2)
+                            )
+                            line_upper = pg.PlotDataItem(
+                                x=[x_pos - 0.2, x_pos + 0.2], y=[up, up],
+                                pen=pg.mkPen('r', width=2)
+                            )
+                            self.main_plot.addItem(line_lower)
+                            self.main_plot.addItem(line_upper)
                 if 'Acceptable Range' not in added_legend_names:
                     range_item = pg.PlotDataItem(
-                        x=[x_positions[0] - 0.2, x_positions[0] + 0.2], y=[lower_bounds[0], lower_bounds[0]],
-                        pen=pg.mkPen('g', width=2), name='Acceptable Range'
+                        x=[-10 - 0.2, -10 + 0.2], y=[0, 0],
+                        pen=pg.mkPen('r', width=2), name='Acceptable Range'
                     )
                     self.legend.addItem(range_item, 'Acceptable Range')
                     added_legend_names.add('Acceptable Range')
