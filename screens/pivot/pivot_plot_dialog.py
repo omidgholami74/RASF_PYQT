@@ -741,3 +741,4 @@ class PivotPlotDialog(QDialog):
             check_item.setCheckState(Qt.CheckState.Checked if self.parent.included_crms[label].isChecked() else Qt.CheckState.Unchecked)
             model.appendRow([value_item, check_item])
         self.update_plot()
+        
