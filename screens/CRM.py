@@ -147,13 +147,14 @@ class CRMTab(QWidget):
         self.search_var = QLineEdit()
         self.filter_var = QComboBox()
         self.decimal_places = QComboBox()
-        self.our_oreas_checkbox = QCheckBox("Our OREAS")   # ✅ اضافه شد
+        self.our_oreas_checkbox = QCheckBox("Our OREAS")
         self.column_widths = {}
         self.sort_column = None
         self.sort_reverse = False
         self.ui_initialized = False
         self.setup_ui()
         self.init_db()
+        self.load_and_display()  # Automatically load and display data on initialization
 
     def setup_ui(self):
         """Setup UI with controls and placeholder."""
@@ -187,7 +188,7 @@ class CRMTab(QWidget):
         self.search_var.textChanged.connect(self.update_display)
         control_layout.addWidget(self.search_var)
 
-        # ✅ Our OREAS checkbox
+        # Our OREAS checkbox
         self.our_oreas_checkbox.stateChanged.connect(self.update_display)
         control_layout.addWidget(self.our_oreas_checkbox)
 
@@ -211,7 +212,7 @@ class CRMTab(QWidget):
         main_layout.addWidget(control_frame)
 
         # Placeholder label
-        self.placeholder_label = QLabel("Click 'Display' to load data.")
+        self.placeholder_label = QLabel("Loading data from database...")
         self.placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         main_layout.addWidget(self.placeholder_label)
 
@@ -266,7 +267,8 @@ class CRMTab(QWidget):
             cursor = self.conn.cursor()
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='pivot_crm'")
             if not cursor.fetchone():
-                QMessageBox.warning(self, "Warning", "Pivot table not found in database. Run the pivot script to initialize.")
+                QMessageBox.warning(self, "Warning", "Pivot table not found in database. Please ensure the pivot_crm table exists.")
+                self.placeholder_label.setText("No pivot_crm table found in database.")
                 return
 
             self.setup_full_ui()
@@ -275,6 +277,7 @@ class CRMTab(QWidget):
         except Exception as e:
             logger.error(f"Failed to load CRM data: {str(e)}")
             QMessageBox.warning(self, "Error", f"Failed to load CRM data:\n{str(e)}")
+            self.placeholder_label.setText("Error loading data from database.")
 
     def update_filter_options(self):
         """Update the Analysis Method filter dropdown with unique values."""
@@ -300,13 +303,13 @@ class CRMTab(QWidget):
     def update_display(self, event=None):
         """Update QTableView display with pivot table data from 'pivot_crm'."""
         if self.conn is None:
-            self._set_status_table("No data loaded")
+            self._set_status_table("No database connection")
             return
 
         try:
             cursor = self.conn.cursor()
 
-            # ✅ اگر چک‌باکس Our OREAS فعال باشه، فقط رکوردهای جدول our_oreas رو نمایش بده
+            # If Our OREAS checkbox is checked, show only records from our_oreas
             if self.our_oreas_checkbox.isChecked():
                 query = """
                     SELECT p.*
@@ -364,7 +367,8 @@ class CRMTab(QWidget):
 
     def _set_status_table(self, text):
         """Set status message in the table."""
-        self.table_view.setModel(None)
+        if self.table_view:
+            self.table_view.setModel(None)
         self.status_label = QLabel(text)
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout = self.layout()

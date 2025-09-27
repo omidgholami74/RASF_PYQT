@@ -213,16 +213,16 @@ def load_excel(app):
                     pivot_creator = PivotCreator(app.pivot_tab)
                     pivot_creator.create_pivot()
             
-            # Trigger CRM tab updates
-            if "CRM" in app.main_content.tab_subtab_map:
-                crm_subtabs = app.main_content.tab_subtab_map["CRM"]["widgets"]
-                if "CRM" in crm_subtabs:
-                    logger.debug("Updating CRM tab")
-                    if hasattr(app.crm_tab, 'reset_cache'):
-                        app.main_content.switch_subtab("CRM", "CRM")  # Show CRM tab
-                        app.crm_tab.reset_cache()
-                    if hasattr(app.crm_tab, 'load_and_display'):
-                        app.crm_tab.load_and_display()
+            # # Trigger CRM tab updates
+            # if "CRM" in app.main_content.tab_subtab_map:
+            #     crm_subtabs = app.main_content.tab_subtab_map["CRM"]["widgets"]
+            #     if "CRM" in crm_subtabs:
+            #         logger.debug("Updating CRM tab")
+            #         if hasattr(app.crm_tab, 'reset_cache'):
+            #             app.main_content.switch_subtab("CRM", "CRM")  # Show CRM tab
+            #             app.crm_tab.reset_cache()
+            #         if hasattr(app.crm_tab, 'load_and_display'):
+            #             app.crm_tab.load_and_display()
             
             # Trigger Process tab updates
             if "Process" in app.main_content.tab_subtab_map:
