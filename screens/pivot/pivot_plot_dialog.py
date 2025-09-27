@@ -223,19 +223,87 @@ class PivotPlotDialog(QDialog):
                     calibration_min <= soln_conc_max <= calibration_max
                 ) if calibration_min != 0 or calibration_max != 0 else False
 
+            # Select optimal blank value
             blank_rows = self.parent.pivot_data[
                 self.parent.pivot_data['Solution Label'].str.contains(r'CRM\s*BLANK', case=False, na=False, regex=True)
             ]
-            self.logger.debug(f"Blank rows: {blank_rows}")
-
+            self.logger.debug(f"Blank rows: {blank_rows.to_dict('records')}")
             blank_val = 0
             blank_correction_status = "Not Applied"
+            selected_blank_label = "None"
             if not blank_rows.empty:
-                first_blank_row = blank_rows.iloc[0]
-                blank_val = first_blank_row[self.selected_element] if pd.notna(first_blank_row[self.selected_element]) else 0
-                blank_val = float(blank_val) if self.is_numeric(blank_val) else 0
-                blank_correction_status = "Applied"
-            self.logger.debug(f"Selected Blank Value: {blank_val}")
+                best_blank_val = 0
+                best_blank_label = "None"
+                min_distance = float('inf')
+                in_range_found = False
+                for _, row in blank_rows.iterrows():
+                    candidate_blank = row[self.selected_element] if pd.notna(row[self.selected_element]) else 0
+                    candidate_label = row['Solution Label']
+                    if not self.is_numeric(candidate_blank):
+                        self.logger.debug(f"Skipping non-numeric blank value '{candidate_blank}' for label '{candidate_label}'")
+                        continue
+                    candidate_blank = float(candidate_blank)
+                    # Check if this blank brings any pivot value into range
+                    in_range = False
+                    for sol_label in self.parent._inline_crm_rows_display.keys():
+                        if sol_label in blank_rows['Solution Label'].values:
+                            continue
+                        pivot_row = self.parent.pivot_data[self.parent.pivot_data['Solution Label'] == sol_label]
+                        if pivot_row.empty:
+                            continue
+                        pivot_val = pivot_row.iloc[0][self.selected_element]
+                        if not self.is_numeric(pivot_val):
+                            continue
+                        pivot_val_float = float(pivot_val)
+                        for row_data, _ in self.parent._inline_crm_rows_display[sol_label]:
+                            if isinstance(row_data, list) and row_data and row_data[0].endswith("CRM"):
+                                val = row_data[self.parent.pivot_data.columns.get_loc(self.selected_element)] if self.selected_element in self.parent.pivot_data.columns else ""
+                                if not self.is_numeric(val):
+                                    continue
+                                crm_val = float(val)
+                                range_val = crm_val * (self.range_percent / 100)
+                                lower = crm_val - range_val
+                                upper = crm_val + range_val
+                                corrected_pivot = pivot_val_float - candidate_blank
+                                if lower <= corrected_pivot <= upper:
+                                    in_range = True
+                                    break
+                        if in_range:
+                            break
+                    if in_range:
+                        best_blank_val = candidate_blank
+                        best_blank_label = candidate_label
+                        in_range_found = True
+                        self.logger.debug(f"Selected blank value {best_blank_val} from '{best_blank_label}' because it brings a pivot value into range")
+                        break
+                    # If no blank brings pivot into range, choose the one that minimizes distance to crm_val
+                    if not in_range_found:
+                        for sol_label in self.parent._inline_crm_rows_display.keys():
+                            if sol_label in blank_rows['Solution Label'].values:
+                                continue
+                            pivot_row = self.parent.pivot_data[self.parent.pivot_data['Solution Label'] == sol_label]
+                            if pivot_row.empty:
+                                continue
+                            pivot_val = pivot_row.iloc[0][self.selected_element]
+                            if not self.is_numeric(pivot_val):
+                                continue
+                            pivot_val_float = float(pivot_val)
+                            for row_data, _ in self.parent._inline_crm_rows_display[sol_label]:
+                                if isinstance(row_data, list) and row_data and row_data[0].endswith("CRM"):
+                                    val = row_data[self.parent.pivot_data.columns.get_loc(self.selected_element)] if self.selected_element in self.parent.pivot_data.columns else ""
+                                    if not self.is_numeric(val):
+                                        continue
+                                    crm_val = float(val)
+                                    corrected_pivot = pivot_val_float - candidate_blank
+                                    distance = abs(corrected_pivot - crm_val)
+                                    if distance < min_distance:
+                                        min_distance = distance
+                                        best_blank_val = candidate_blank
+                                        best_blank_label = candidate_label
+                blank_val = best_blank_val
+                selected_blank_label = best_blank_label
+                blank_correction_status = "Applied" if blank_val != 0 else "Not Applied"
+                self.logger.debug(f"Selected blank value: {blank_val} from '{selected_blank_label}'")
 
             crm_labels = [
                 label for label in self.parent._inline_crm_rows_display.keys()
@@ -317,6 +385,7 @@ class PivotPlotDialog(QDialog):
                                 annotation += f"\n  - Acceptable Range: [N/A]"
                                 annotation += f"\n  - Status: Out of range (non-numeric data)."
                                 annotation += f"\n  - Blank Value: {self.format_number(blank_val)}"
+                                annotation += f"\n  - Blank Label: {selected_blank_label}"
                                 annotation += f"\n  - Blank Correction Status: {blank_correction_status}"
                                 annotation += f"\n  - Sample Value - Blank: {self.format_number(pivot_val)}"
                                 annotation += f"\n  - Corrected Range: [N/A]"
@@ -350,6 +419,7 @@ class PivotPlotDialog(QDialog):
                                     corrected_pivot = pivot_val_float
                                     corrected_in_range = True
                                     annotation += f"\n  - Blank Value: {self.format_number(blank_val)}"
+                                    annotation += f"\n  - Blank Label: {selected_blank_label}"
                                     annotation += f"\n  - Blank Correction Status: Not Applied (in range)"
                                     annotation += f"\n  - Corrected Sample Value: {self.format_number(corrected_pivot)}"
                                     annotation += f"\n  - Status after Blank Subtraction: In range."
@@ -357,9 +427,11 @@ class PivotPlotDialog(QDialog):
                                     annotation += f"\n  - Status: Out of range without adjustment."
                                     corrected_pivot = pivot_val_float - blank_val
                                     annotation += f"\n  - Blank Value: {self.format_number(blank_val)}"
+                                    annotation += f"\n  - Blank Label: {selected_blank_label}"
                                     annotation += f"\n  - Blank Correction Status: {blank_correction_status}"
                                     annotation += f"\n  - Sample Value - Blank: {self.format_number(corrected_pivot)}"
                                     annotation += f"\n  - Corrected Range: [{self.format_number(lower)} to {self.format_number(upper)}]"
+                                    corrected_in_range = lower <= corrected_pivot <= upper
                                     if corrected_in_range:
                                         annotation += f"\n  - Status after Blank Subtraction: In range."
                                     else:
@@ -376,8 +448,8 @@ class PivotPlotDialog(QDialog):
                                                 direction = ""
                                             scale_percent = abs((scale_factor - 1) * 100)
                                             annotation += f"\n  - Required Scaling: {scale_percent:.2f}% {direction} to fit within range."
-                                            if scale_percent > 200:
-                                                annotation += f"\n  - Warning: Scaling exceeds 200% ({scale_percent:.2f}%). This point is problematic and may require further investigation."
+                                            if scale_percent > float(self.max_correction_percent.text()):
+                                                annotation += f"\n  - Warning: Scaling exceeds {self.max_correction_percent.text()}% ({scale_percent:.2f}%). This point is problematic and may require further investigation."
                                         else:
                                             annotation += f"\n  - Scaling not applicable (corrected sample value is zero)."
                                 

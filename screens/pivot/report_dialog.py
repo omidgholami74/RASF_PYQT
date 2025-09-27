@@ -25,6 +25,7 @@ class ReportDialog(QDialog):
             'Sample Value': True,
             'Acceptable Range': True,
             'Blank Value': False,
+            'Blank Label': False,  # Added Blank Label column
             'Blank Correction Status': False,
             'Sample Value - Blank': False,
             'Soln Conc': True,
@@ -99,7 +100,7 @@ class ReportDialog(QDialog):
         self.generate_html_report()
 
     def generate_html_report(self):
-        """Generate HTML report with only visible columns and add textual decision analysis section."""
+        """Generate HTML report with only visible columns and add textual decision analysis."""
         html = """
         <html>
         <head>
@@ -140,7 +141,7 @@ class ReportDialog(QDialog):
             verification_id = verification_id_match.group(1) if verification_id_match else "Unknown"
             
             # Initialize variables for all possible columns
-            certificate_val = sample_val = acceptable_range = blank_val = blank_correction_status = corrected_sample_val = soln_conc = int_val = calibration_range = icp_recovery = icp_status = detection_limit = rsd_percent = scaling = ""
+            certificate_val = sample_val = acceptable_range = blank_val = blank_label = blank_correction_status = corrected_sample_val = soln_conc = int_val = calibration_range = icp_recovery = icp_status = detection_limit = rsd_percent = scaling = ""
             sample_val_class = corrected_sample_val_class = soln_conc_class = icp_status_class = ""
             
             # Parse annotation lines
@@ -160,6 +161,8 @@ class ReportDialog(QDialog):
                     sample_val_class = 'out-range'
                 elif "Blank Value:" in line:
                     blank_val = line.split(": ")[1].strip()
+                elif "Blank Label:" in line:
+                    blank_label = line.split(": ")[1].strip()
                 elif "Blank Correction Status:" in line:
                     blank_correction_status = line.split(": ")[1].strip()
                 elif "Sample Value - Blank:" in line:
@@ -205,6 +208,7 @@ class ReportDialog(QDialog):
                 'Sample Value': (sample_val, sample_val_class),
                 'Acceptable Range': (acceptable_range, ''),
                 'Blank Value': (blank_val, ''),
+                'Blank Label': (blank_label, ''),  # Added Blank Label
                 'Blank Correction Status': (blank_correction_status, ''),
                 'Sample Value - Blank': (corrected_sample_val, corrected_sample_val_class),
                 'Soln Conc': (soln_conc, soln_conc_class),

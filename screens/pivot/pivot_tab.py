@@ -532,7 +532,7 @@ class PivotTab(QWidget):
                 return
 
             blank_adjust, scale = res.x
-
+    
             # Recalculate in_range_after
             in_range_after = 0
             for d in crm_data:
