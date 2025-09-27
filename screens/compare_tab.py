@@ -7,6 +7,9 @@ import logging
 import re
 from xlsxwriter import Workbook
 import random
+import os
+import subprocess
+import platform
 
 # Setup logging
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -827,8 +830,9 @@ class CompareTab(QWidget):
         self.status_label.setText("Values corrected and table updated")
         self.status_label.setStyleSheet("color: #2e7d32; font: 13px 'Segoe UI'; background-color: #E8F5E9; padding: 10px; border-radius: 5px; border: 1px solid #A5D6A7;")
 
+
     def export_report(self, match_data, all_columns, numeric_columns):
-        """Export comparison results to an Excel file."""
+        """Export comparison results to an Excel file and ask to open it."""
         logger.debug("Exporting comparison report")
         if not match_data:
             logger.error("No comparison data available")
@@ -856,7 +860,7 @@ class CompareTab(QWidget):
                 d_format = workbook.add_format({'bg_color': '#FFEBEE', 'border': 1, 'align': 'center'})
                 blank_format = workbook.add_format({'bg_color': '#FFFFFF', 'border': 1, 'align': 'center'})
                 sum_format = workbook.add_format({'bold': True, 'bg_color': '#F5F6F5', 'border': 1, 'align': 'center'})
-                number_format = workbook.add_format({'num_format': '0.00', 'bg_color': '#FFEBEE', 'border': 1, 'align': 'center'})  # Changed to 2 decimal places
+                number_format = workbook.add_format({'num_format': '0.00', 'bg_color': '#FFEBEE', 'border': 1, 'align': 'center'})
 
                 headers = ["Type", "ID"] + all_columns
                 for col_idx, header in enumerate(headers):
@@ -874,7 +878,7 @@ class CompareTab(QWidget):
                         val = match.get(f"Sample_{col}", "")
                         format_to_use = sample_format
                         if isinstance(val, (int, float)) and not pd.isna(val):
-                            worksheet.write(row, col_idx, round(val, 2), format_to_use)  # Changed to 2 decimal places
+                            worksheet.write(row, col_idx, round(val, 2), format_to_use)
                         else:
                             worksheet.write(row, col_idx, str(val) if not pd.isna(val) else "", format_to_use)
                         col_idx += 1
@@ -887,7 +891,7 @@ class CompareTab(QWidget):
                         val = match.get(f"Control_{col}", "")
                         format_to_use = control_format
                         if isinstance(val, (int, float)) and not pd.isna(val):
-                            worksheet.write(row, col_idx, round(val, 2), format_to_use)  # Changed to 2 decimal places
+                            worksheet.write(row, col_idx, round(val, 2), format_to_use)
                         else:
                             worksheet.write(row, col_idx, str(val) if not pd.isna(val) else "", format_to_use)
                         col_idx += 1
@@ -902,7 +906,7 @@ class CompareTab(QWidget):
                     for col in numeric_columns:
                         d = match.get(f"{col}_Difference")
                         if d is not None:
-                            worksheet.write(row, col_idx, round(d, 2), number_format)  # Changed to 2 decimal places
+                            worksheet.write(row, col_idx, round(d, 2), number_format)
                             column_sums[col] += d
                             total_errors.append(d)
                         else:
@@ -922,7 +926,7 @@ class CompareTab(QWidget):
                     col_idx += 1
                 for col in numeric_columns:
                     sum_d = column_sums[col]
-                    worksheet.write(row, col_idx, round(sum_d, 2), sum_format)  # Changed to 2 decimal places
+                    worksheet.write(row, col_idx, round(sum_d, 2), sum_format)
                     col_idx += 1
                 row += 1
 
@@ -930,11 +934,33 @@ class CompareTab(QWidget):
                     overall_avg = sum(total_errors) / len(total_errors)
                 else:
                     overall_avg = 0
-                worksheet.write(row, 0, f"Overall Average Error: {overall_avg:.2f}", sum_format)  # Changed to 2 decimal places
+                worksheet.write(row, 0, f"Overall Average Error: {overall_avg:.2f}", sum_format)
 
             self.status_label.setText(f"Report exported to {output_path.split('/')[-1]}")
             self.status_label.setStyleSheet("color: #2e7d32; font: 13px 'Segoe UI'; background-color: #E8F5E9; padding: 10px; border-radius: 5px; border: 1px solid #A5D6A7;")
             QMessageBox.information(self, "Success", f"Report exported to {output_path}")
+
+            # Ask user if they want to open the file
+            reply = QMessageBox.question(
+                self,
+                "Open File",
+                f"Do you want to open the exported file?\n{output_path}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+
+            if reply == QMessageBox.StandardButton.Yes:
+                try:
+                    if platform.system() == "Windows":
+                        os.startfile(output_path)  # برای ویندوز
+                    else:
+                        # برای لینوکس و مک
+                        subprocess.run(["open" if platform.system() == "Darwin" else "xdg-open", output_path])
+                    logger.debug(f"Opened file: {output_path}")
+                except Exception as e:
+                    logger.error(f"Error opening file: {str(e)}")
+                    self.status_label.setText(f"Error opening file: {str(e)}")
+                    self.status_label.setStyleSheet("color: #d32f2f; font: 13px 'Segoe UI'; background-color: #FFEBEE; padding: 10px; border-radius: 5px; border: 1px solid #EF9A9A;")
+                    QMessageBox.critical(self, "Error", f"Failed to open file:\n{str(e)}")
 
         except Exception as e:
             logger.error(f"Error exporting report: {str(e)}")
