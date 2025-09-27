@@ -4,9 +4,24 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QCom
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QColor, QBrush
 
-# Setup logging (minimal for performance)
+# Setup logging with minimal output for performance
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+class CustomTreeWidgetItem(QTreeWidgetItem):
+    """Custom QTreeWidgetItem to enforce numeric sorting for Soln Conc and Int columns."""
+    def __lt__(self, other):
+        column = self.treeWidget().sortColumn()
+        if column in [2, 3]:  # Soln Conc or Int columns
+            value_self = self.data(column, Qt.ItemDataRole.UserRole)
+            value_other = other.data(column, Qt.ItemDataRole.UserRole)
+            try:
+                return float(value_self) < float(value_other)
+            except (ValueError, TypeError):
+                return str(value_self) < str(value_other)
+        else:
+            # For non-numeric columns, use text-based sorting
+            return self.text(column).lower() < other.text(column).lower()
 
 class ElementsTab(QWidget):
     def __init__(self, app, parent=None):
@@ -19,6 +34,7 @@ class ElementsTab(QWidget):
 
     def setup_ui(self):
         """Setup the Elements tab UI with modern, ribbon-style aesthetics"""
+        logger.info("Setting up ElementsTab UI")
         # Main layout
         elements_layout = QVBoxLayout()
         elements_layout.setContentsMargins(15, 15, 15, 15)
@@ -187,29 +203,16 @@ class ElementsTab(QWidget):
 
         # Connect sort signal
         self.details_tree.header().sortIndicatorChanged.connect(self.handle_sort)
+        logger.info("UI setup completed")
 
     def handle_sort(self, logical_index, order):
-        """Handle sorting of the QTreeWidget."""
+        """Handle sorting of the QTreeWidget with proper numeric sorting for Soln Conc and Int."""
+        logger.info(f"Sorting column {logical_index} with order {order}")
         self.details_tree.sortItems(logical_index, order)
-        for i in range(self.details_tree.topLevelItemCount()):
-            item = self.details_tree.topLevelItem(i)
-            # Store numeric values for Soln Conc and Int for proper sorting
-            if logical_index in [2, 3]:  # Soln Conc or Int columns
-                try:
-                    value = item.text(logical_index)
-                    if value == '---' or value == '':
-                        item.setData(logical_index, Qt.ItemDataRole.UserRole, float('-inf'))
-                    else:
-                        numeric_value = float(value)
-                        item.setData(logical_index, Qt.ItemDataRole.UserRole, numeric_value)
-                except ValueError:
-                    item.setData(logical_index, Qt.ItemDataRole.UserRole, float('-inf'))
-            else:
-                # For non-numeric columns (Solution Label, Element, Wavelength), use text
-                item.setData(logical_index, Qt.ItemDataRole.UserRole, item.text(logical_index))
 
     def display_elements(self, elements):
         """Display element buttons in the container"""
+        logger.info(f"Displaying elements: {elements}")
         for i in reversed(range(self.elements_grid_layout.count())):
             item = self.elements_grid_layout.itemAt(i)
             if item.widget():
@@ -247,6 +250,7 @@ class ElementsTab(QWidget):
 
     def clean_dataframe(self, df):
         """Clean DataFrame to ensure valid data"""
+        logger.info("Cleaning DataFrame")
         if df is None or not isinstance(df, pd.DataFrame):
             logger.error("Invalid DataFrame provided")
             return None
@@ -255,8 +259,11 @@ class ElementsTab(QWidget):
             df = df.dropna(subset=['Type', 'Element'])
             df['Type'] = df['Type'].astype(str).str.strip()
             df['Element'] = df['Element'].astype(str).str.strip()
-            df['Soln Conc'] = df['Soln Conc'].astype(str)  # Keep as string to preserve '---'
-            df['Int'] = df['Int'].astype(str)  # Keep as string to preserve '---'
+            df['Solution Label'] = df['Solution Label'].astype(str).str.strip()
+            # Convert Soln Conc and Int to numeric, preserving -1.0 for invalid values
+            df['Soln Conc'] = pd.to_numeric(df['Soln Conc'], errors='coerce').fillna(-1.0)
+            df['Int'] = pd.to_numeric(df['Int'], errors='coerce').fillna(-1.0)
+            logger.info("DataFrame cleaned successfully")
             return df
         except Exception as e:
             logger.error(f"Error cleaning DataFrame: {str(e)}")
@@ -264,6 +271,7 @@ class ElementsTab(QWidget):
 
     def show_element_details(self, element):
         """Show details for the selected element"""
+        logger.info(f"Showing details for element: {element}")
         self.current_element = element
         if self.df_cache is None:
             self.df_cache = self.clean_dataframe(self.app.get_data())
@@ -272,7 +280,7 @@ class ElementsTab(QWidget):
         if df is None:
             logger.error("No valid DataFrame available")
             self.details_tree.clear()
-            item = QTreeWidgetItem(["No data available", element, "", "", ""])
+            item = CustomTreeWidgetItem(["No data available", element, "", "", ""])
             item.setForeground(0, QBrush(QColor("#d32f2f")))
             self.details_tree.addTopLevelItem(item)
             return
@@ -283,13 +291,14 @@ class ElementsTab(QWidget):
             std_data = df[(df['Type'] == 'Std') & (df['Element'].str.startswith(element + ' '))]
         except Exception as e:
             logger.error(f"Error filtering STD data: {str(e)}")
-            item = QTreeWidgetItem([f"Error: {str(e)}", element, "", "", ""])
+            item = CustomTreeWidgetItem([f"Error: {str(e)}", element, "", "", ""])
             item.setForeground(0, QBrush(QColor("#d32f2f")))
             self.details_tree.addTopLevelItem(item)
             return
 
         if std_data.empty:
-            item = QTreeWidgetItem(["No STD data found", element, "", "", ""])
+            logger.warning(f"No STD data found for element: {element}")
+            item = CustomTreeWidgetItem(["No STD data found", element, "", "", ""])
             item.setForeground(0, QBrush(QColor("#757575")))
             self.details_tree.addTopLevelItem(item)
             self.wavelength_combo.blockSignals(True)
@@ -311,43 +320,45 @@ class ElementsTab(QWidget):
             self.wavelength_combo.blockSignals(False)
 
             try:
-                items = [
-                    QTreeWidgetItem([
+                items = []
+                for _, row in std_data.iterrows():
+                    soln_conc = row['Soln Conc']
+                    int_val = row['Int']
+                    # Format display values
+                    soln_conc_display = '---' if soln_conc == -1.0 else f"{soln_conc:.2f}"
+                    int_display = '---' if int_val == -1.0 else f"{int_val:.2f}"
+                    wavelength = row.get('Element', '').replace(element + ' ', '') if row.get('Element', '').startswith(element + ' ') else row.get('Wavelength', '')
+                    item = CustomTreeWidgetItem([
                         str(row.get('Solution Label', '')),
                         element,
-                        str(row.get('Soln Conc', '')),
-                        str(row.get('Int', '')),
-                        row.get('Element', '').replace(element + ' ', '') if row.get('Element', '').startswith(element + ' ') else row.get('Wavelength', '')
-                    ]) for _, row in std_data.iterrows()
-                ]
-                for i, item in enumerate(items):
+                        soln_conc_display,
+                        int_display,
+                        wavelength
+                    ])
                     # Store numeric values for sorting
-                    for col in [2, 3]:  # Soln Conc and Int
-                        value = item.text(col)
-                        try:
-                            if value == '---' or value == '':
-                                item.setData(col, Qt.ItemDataRole.UserRole, float('-inf'))
-                            else:
-                                numeric_value = float(value)
-                                item.setData(col, Qt.ItemDataRole.UserRole, numeric_value)
-                        except ValueError:
-                            item.setData(col, Qt.ItemDataRole.UserRole, float('-inf'))
+                    item.setData(2, Qt.ItemDataRole.UserRole, float(soln_conc))
+                    item.setData(3, Qt.ItemDataRole.UserRole, float(int_val))
+                    # Store text for non-numeric columns
+                    item.setData(0, Qt.ItemDataRole.UserRole, str(row.get('Solution Label', '')).lower())
+                    item.setData(1, Qt.ItemDataRole.UserRole, element.lower())
+                    item.setData(4, Qt.ItemDataRole.UserRole, wavelength.lower())
+                    items.append(item)
+
+                for i, item in enumerate(items):
                     # Apply alternating background
                     if i % 2 == 0:
-                        item.setBackground(0, QBrush(QColor("#fafafa")))
-                        item.setBackground(1, QBrush(QColor("#fafafa")))
-                        item.setBackground(2, QBrush(QColor("#fafafa")))
-                        item.setBackground(3, QBrush(QColor("#fafafa")))
-                        item.setBackground(4, QBrush(QColor("#fafafa")))
+                        for col in range(5):
+                            item.setBackground(col, QBrush(QColor("#fafafa")))
                 self.details_tree.addTopLevelItems(items)
             except Exception as e:
                 logger.error(f"Error populating tree: {str(e)}")
-                item = QTreeWidgetItem([f"Error: {str(e)}", element, "", "", ""])
+                item = CustomTreeWidgetItem([f"Error: {str(e)}", element, "", "", ""])
                 item.setForeground(0, QBrush(QColor("#d32f2f")))
                 self.details_tree.addTopLevelItem(item)
 
     def filter_by_wavelength(self, selected_wavelength):
         """Filter data by selected wavelength"""
+        logger.info(f"Filtering by wavelength: {selected_wavelength}")
         if not self.current_element or selected_wavelength == "All Wavelengths":
             self.show_element_details(self.current_element)
             return
@@ -359,7 +370,7 @@ class ElementsTab(QWidget):
         if df is None:
             logger.error("No valid DataFrame available")
             self.details_tree.clear()
-            item = QTreeWidgetItem(["No data available", self.current_element, "", "", selected_wavelength])
+            item = CustomTreeWidgetItem(["No data available", self.current_element, "", "", selected_wavelength])
             item.setForeground(0, QBrush(QColor("#d32f2f")))
             self.details_tree.addTopLevelItem(item)
             return
@@ -373,49 +384,50 @@ class ElementsTab(QWidget):
             std_data = df[type_mask & element_mask]
         except Exception as e:
             logger.error(f"Error filtering data: {str(e)}")
-            item = QTreeWidgetItem([f"Error: {str(e)}", self.current_element, "", "", selected_wavelength])
+            item = CustomTreeWidgetItem([f"Error: {str(e)}", self.current_element, "", "", selected_wavelength])
             item.setForeground(0, QBrush(QColor("#d32f2f")))
             self.details_tree.addTopLevelItem(item)
             return
 
         if std_data.empty:
-            item = QTreeWidgetItem([f"No data for {selected_wavelength}", self.current_element, "", "", selected_wavelength])
+            logger.warning(f"No data found for wavelength: {selected_wavelength}")
+            item = CustomTreeWidgetItem([f"No data for {selected_wavelength}", self.current_element, "", "", selected_wavelength])
             item.setForeground(0, QBrush(QColor("#757575")))
             self.details_tree.addTopLevelItem(item)
         else:
             try:
-                items = [
-                    QTreeWidgetItem([
+                items = []
+                for _, row in std_data.iterrows():
+                    soln_conc = row['Soln Conc']
+                    int_val = row['Int']
+                    # Format display values
+                    soln_conc_display = '---' if soln_conc == -1.0 else f"{soln_conc:.2f}"
+                    int_display = '---' if int_val == -1.0 else f"{int_val:.2f}"
+                    item = CustomTreeWidgetItem([
                         str(row.get('Solution Label', '')),
                         self.current_element,
-                        str(row.get('Soln Conc', '')),
-                        str(row.get('Int', '')),
+                        soln_conc_display,
+                        int_display,
                         selected_wavelength
-                    ]) for _, row in std_data.iterrows()
-                ]
-                for i, item in enumerate(items):
+                    ])
                     # Store numeric values for sorting
-                    for col in [2, 3]:  # Soln Conc and Int
-                        value = item.text(col)
-                        try:
-                            if value == '---' or value == '':
-                                item.setData(col, Qt.ItemDataRole.UserRole, float('-inf'))
-                            else:
-                                numeric_value = float(value)
-                                item.setData(col, Qt.ItemDataRole.UserRole, numeric_value)
-                        except ValueError:
-                            item.setData(col, Qt.ItemDataRole.UserRole, float('-inf'))
+                    item.setData(2, Qt.ItemDataRole.UserRole, float(soln_conc))
+                    item.setData(3, Qt.ItemDataRole.UserRole, float(int_val))
+                    # Store text for non-numeric columns
+                    item.setData(0, Qt.ItemDataRole.UserRole, str(row.get('Solution Label', '')).lower())
+                    item.setData(1, Qt.ItemDataRole.UserRole, self.current_element.lower())
+                    item.setData(4, Qt.ItemDataRole.UserRole, selected_wavelength.lower())
+                    items.append(item)
+
+                for i, item in enumerate(items):
                     # Apply alternating background
                     if i % 2 == 0:
-                        item.setBackground(0, QBrush(QColor("#fafafa")))
-                        item.setBackground(1, QBrush(QColor("#fafafa")))
-                        item.setBackground(2, QBrush(QColor("#fafafa")))
-                        item.setBackground(3, QBrush(QColor("#fafafa")))
-                        item.setBackground(4, QBrush(QColor("#fafafa")))
+                        for col in range(5):
+                            item.setBackground(col, QBrush(QColor("#fafafa")))
                 self.details_tree.addTopLevelItems(items)
             except Exception as e:
                 logger.error(f"Error populating tree: {str(e)}")
-                item = QTreeWidgetItem([f"Error: {str(e)}", self.current_element, "", "", selected_wavelength])
+                item = CustomTreeWidgetItem([f"Error: {str(e)}", self.current_element, "", "", selected_wavelength])
                 item.setForeground(0, QBrush(QColor("#d32f2f")))
                 self.details_tree.addTopLevelItem(item)
 
@@ -424,7 +436,6 @@ class ElementsTab(QWidget):
         logger.info("Processing BLK elements")
         self.df_cache = self.clean_dataframe(self.app.get_data())
         df = self.df_cache
-        print(df)
         if df is None:
             logger.info("No valid data available in process_blk_elements")
             self.display_elements(["Cu", "Zn", "Fe"])
