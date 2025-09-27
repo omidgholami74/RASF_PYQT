@@ -25,7 +25,6 @@ class FilterDialog(QDialog):
         self.checkboxes = {}
         self.layout = QVBoxLayout(self)
 
-        # Scroll area for checkboxes
         scroll = QScrollArea()
         scroll_widget = QWidget()
         scroll_layout = QVBoxLayout(scroll_widget)
@@ -35,7 +34,6 @@ class FilterDialog(QDialog):
 
         self.populate_checkboxes(scroll_layout)
 
-        # Buttons
         buttons = QHBoxLayout()
         select_all_btn = QPushButton("Select All")
         select_all_btn.clicked.connect(self.select_all)
@@ -234,21 +232,19 @@ class PivotTab(QWidget):
             return
 
         df = self.pivot_data.copy()
-        self.logger.debug(f"Pivot data:\n{df}")
+        self.logger.debug(f"Pivot data shape: {df.shape}")
 
         s = self.search_var.text().strip().lower()
         if s:
             mask = df.apply(lambda r: r.astype(str).str.lower().str.contains(s, na=False).any(), axis=1)
             df = df[mask]
 
-        # Apply row filters
         for field, values in self.row_filter_values.items():
             if field in df.columns:
                 selected = [k for k, v in values.items() if v]
                 if selected:
                     df = df[df[field].isin(selected)]
 
-        # Apply column filters
         selected_cols = ['Solution Label']
         if self.use_oxide_var.isChecked():
             for field, values in self.column_filter_values.items():
@@ -267,9 +263,8 @@ class PivotTab(QWidget):
 
         df = df.reset_index(drop=True)
         self.current_view_df = df
-        self.logger.debug(f"Current view data:\n{df}")
+        self.logger.debug(f"Current view data shape: {df.shape}")
 
-        # Rebuild CRM display for current columns
         self._inline_crm_rows_display = self.crm_manager._build_crm_row_lists_for_columns(list(df.columns))
         self.logger.debug(f"CRM rows display: {self._inline_crm_rows_display}")
 
@@ -292,11 +287,13 @@ class PivotTab(QWidget):
     def calculate_dynamic_range(self, value):
         try:
             value = float(value)
-            if value < 100:
+            if value < 10:
+                return 2
+            elif 10 <= value < 100:
                 return value * 0.2
-            elif 100 <= value <= 1000:
-                return value * 0.1
             else:
+                if self.current_plot_dialog and hasattr(self.current_plot_dialog, 'range_percent'):
+                    return value * (self.current_plot_dialog.range_percent / 100)
                 return value * 0.05
         except (ValueError, TypeError):
             return 0
@@ -435,21 +432,21 @@ class PivotTab(QWidget):
             return
 
         if not self.current_plot_dialog or not self.current_plot_dialog.isVisible():
-            self.logger.warning("Plot dialog not open or not visible for element selection")
+            self.logger.warning("Plot dialog not open or not visible")
             QMessageBox.warning(self, "Warning", "Please open the plot window first!")
             return
 
         selected_element = self.current_plot_dialog.element_selector.currentText()
         if not selected_element or selected_element not in self.pivot_data.columns:
             available_elements = [col for col in self.pivot_data.columns if col != 'Solution Label']
-            self.logger.warning(f"Invalid element selected: {selected_element}. Available elements: {available_elements}")
-            QMessageBox.warning(self, "Warning", f"Please select a valid element! Available elements: {', '.join(available_elements)}")
+            self.logger.warning(f"Invalid element selected: {selected_element}. Available: {available_elements}")
+            QMessageBox.warning(self, "Warning", f"Please select a valid element! Available: {', '.join(available_elements)}")
             return
 
         try:
             max_corr = float(self.max_correction_percent.text()) / 100
         except ValueError:
-            self.logger.warning("Invalid max correction percent entered")
+            self.logger.warning("Invalid max correction percent")
             QMessageBox.warning(self, "Warning", "Invalid max correction percent!")
             return
 
@@ -457,7 +454,6 @@ class PivotTab(QWidget):
             self.logger.debug(f"Correcting pivot CRM for element: {selected_element}")
             self.pivot_data[selected_element] = pd.to_numeric(self.pivot_data[selected_element], errors='coerce')
 
-            # Extract CRM data for optimization
             crm_data = []
             for sol_label, crm_rows in self._inline_crm_rows_display.items():
                 if sol_label not in self.included_crms or not self.included_crms[sol_label].isChecked():
@@ -479,9 +475,10 @@ class PivotTab(QWidget):
                                     'cert_val': cert_val,
                                     'lower': lower,
                                     'upper': upper,
-                                    'wavelength': 'default'  # Placeholder; extend if multiple wavelengths
+                                    'wavelength': 'default'
                                 })
                             except ValueError:
+                                self.logger.warning(f"Invalid CRM value for {sol_label}: {val_str}")
                                 continue
 
             if not crm_data:
@@ -489,7 +486,6 @@ class PivotTab(QWidget):
                 QMessageBox.warning(self, "Warning", "No valid CRM data for correction!")
                 return
 
-            # Group by magnitude orders if needed (condition 5)
             def get_magnitude(val):
                 if val == 0:
                     return 0
@@ -497,16 +493,8 @@ class PivotTab(QWidget):
             
             magnitudes = {get_magnitude(d['cert_val']) for d in crm_data}
             if len(magnitudes) > 1:
-                # Handle different magnitudes separately if needed, but for now optimize globally with constraints
-                self.logger.info("Multiple magnitudes detected; optimizing with care to not shift others out")
+                self.logger.info("Multiple magnitudes detected; optimizing globally")
 
-            # Handle multiple wavelengths (condition 6): Select the one with Soln Conc in range or closest
-            # Assuming for now single wavelength; extend crm_data with wavelength if available
-
-            # Optimization objective: Maximize number of in-range after applying blank subtraction and scale
-            # Params: [blank_adjust, scale_factor]
-            # Constraints: scale_factor between 1 - max_corr and 1 + max_corr
-            # Also, prefer minimal changes (regularization)
             def objective(params, crm_data, max_corr):
                 blank_adjust, scale = params
                 in_range_count = 0
@@ -514,13 +502,11 @@ class PivotTab(QWidget):
                     adjusted_val = (d['pivot_val'] - blank_adjust) * scale
                     if d['lower'] <= adjusted_val <= d['upper']:
                         in_range_count += 1
-                # Maximize in_range, minimize changes (L2 reg on params)
-                reg = 10 * (abs(blank_adjust) + abs(scale - 1))  # Weighted regularization
-                return -in_range_count + reg / len(crm_data)  # Negative for maximization
+                reg = 10 * (abs(blank_adjust) + abs(scale - 1))
+                return -in_range_count + reg / len(crm_data)
 
-            # Bounds: blank_adjust dynamic based on magnitudes, scale around 1
             avg_cert = np.mean([d['cert_val'] for d in crm_data])
-            blank_bounds = (-avg_cert * 0.15, avg_cert * 0.15)  # Enhanced from examples: up to 15% of avg
+            blank_bounds = (-avg_cert * 0.15, avg_cert * 0.15)
             scale_bounds = (1 - max_corr, 1 + max_corr)
             bounds = [blank_bounds, scale_bounds]
 
@@ -528,23 +514,20 @@ class PivotTab(QWidget):
 
             if not res.success:
                 self.logger.warning("Optimization failed")
-                QMessageBox.warning(self, "Warning", "Optimization failed to find suitable correction!")
+                QMessageBox.warning(self, "Warning", "Optimization failed!")
                 return
 
             blank_adjust, scale = res.x
     
-            # Recalculate in_range_after
             in_range_after = 0
             for d in crm_data:
                 adjusted_val = (d['pivot_val'] - blank_adjust) * scale
                 if d['lower'] <= adjusted_val <= d['upper']:
                     in_range_after += 1
 
-            # Threshold checks (conditions 3,4,7): If most are already in range, skip scale if not needed
             total_crm = len(crm_data)
-            threshold_in_range = max(0.75 * total_crm, total_crm - 2)  # Enhanced: 75% or all but 1-2
+            threshold_in_range = max(0.75 * total_crm, total_crm - 2)
             if in_range_after >= threshold_in_range and abs(scale - 1) > 0.01:
-                # If good enough with blank only, try re-optimizing with scale=1
                 def objective_blank(p, crm_data, max_corr):
                     return objective([p[0], 1], crm_data, max_corr)
                 res_blank = differential_evolution(objective_blank, [blank_bounds], args=(crm_data, max_corr))
@@ -557,17 +540,13 @@ class PivotTab(QWidget):
                         if d['lower'] <= adjusted_val <= d['upper']:
                             in_range_after += 1
 
-            # For duplicates (condition 4): If at least one per ID in range, count as good
-            # Assuming no duplicates for now
-
-            # Apply if improvement is significant
             initial_in_range = sum(d['lower'] <= d['pivot_val'] <= d['upper'] for d in crm_data)
             if in_range_after > initial_in_range:
                 self.pivot_data[selected_element] = (self.pivot_data[selected_element] - blank_adjust) * scale
                 self.logger.debug(f"Applied correction: blank_adjust={blank_adjust}, scale={scale}")
-                QMessageBox.information(self, "Success", f"Optimized correction applied: blank_adjust={blank_adjust:.3f}, scale={scale:.3f}. In-range: {int(in_range_after)}/{total_crm}")
+                QMessageBox.information(self, "Success", f"Correction applied: blank_adjust={blank_adjust:.3f}, scale={scale:.3f}. In-range: {int(in_range_after)}/{total_crm}")
             else:
-                self.logger.info("No significant improvement; skipping correction")
+                self.logger.info("No improvement; skipping correction")
                 QMessageBox.information(self, "Info", "Data already optimal or no improvement possible.")
 
             self.update_pivot_display()

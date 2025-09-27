@@ -9,7 +9,7 @@ import logging
 from datetime import datetime
 
 class PivotPlotDialog(QDialog):
-    """Dialog for plotting Verification data with PyQtGraph for professional plotting."""
+    """Dialog for plotting Verification data with PyQtGraph."""
     def __init__(self, parent, annotations):
         super().__init__(parent)
         self.parent = parent
@@ -47,7 +47,7 @@ class PivotPlotDialog(QDialog):
         self.show_range.toggled.connect(self.update_plot)
         control_frame.addWidget(self.show_range)
         
-        control_frame.addWidget(QLabel("Acceptable Range (%):"))
+        control_frame.addWidget(QLabel("Acceptable Range (% for >100):"))
         self.range_combo = QComboBox()
         self.range_combo.addItems(["5%", "10%", "15%"])
         self.range_combo.setCurrentText("5%")
@@ -127,6 +127,7 @@ class PivotPlotDialog(QDialog):
 
     def show_report(self):
         from .report_dialog import ReportDialog
+        self.logger.debug(f"Opening report with annotations: {self.annotations}")
         dialog = ReportDialog(self, self.annotations)
         dialog.exec()
 
@@ -152,8 +153,8 @@ class PivotPlotDialog(QDialog):
     def update_plot(self):
         self.selected_element = self.element_selector.currentText()
         if not self.selected_element or self.selected_element not in self.parent.pivot_data.columns:
-            self.logger.warning(f"Element '{self.selected_element}' not found in pivot data! Available columns: {list(self.parent.pivot_data.columns)}")
-            QMessageBox.warning(self, "Warning", f"Element '{self.selected_element}' not found in pivot data! Available elements: {', '.join(self.parent.pivot_data.columns)}")
+            self.logger.warning(f"Element '{self.selected_element}' not found in pivot data!")
+            QMessageBox.warning(self, "Warning", f"Element '{self.selected_element}' not found!")
             return
 
         try:
@@ -170,22 +171,13 @@ class PivotPlotDialog(QDialog):
             wavelength = ' '.join(self.selected_element.split()[1:]) if len(self.selected_element.split()) > 1 else ""
             analysis_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            # Calculate calibration range from standards
             std_data = self.parent.original_df[
                 (self.parent.original_df['Type'] == 'Std') & 
                 (self.parent.original_df['Element'] == self.selected_element)
             ]['Soln Conc']
-            self.logger.debug(f"Raw Std data for {self.selected_element}: {std_data.tolist()}")
-            std_data_numeric = []
-            for x in std_data:
-                if self.is_numeric(x):
-                    try:
-                        std_data_numeric.append(float(x))
-                    except (ValueError, TypeError) as e:
-                        self.logger.warning(f"Failed to convert Std value '{x}' to float: {str(e)}")
-            self.logger.debug(f"Numeric Std data for {self.selected_element}: {std_data_numeric}")
+            std_data_numeric = [float(x) for x in std_data if self.is_numeric(x)]
             if not std_data_numeric:
-                self.logger.warning(f"No valid numeric Std data for element: {self.selected_element}")
+                self.logger.warning(f"No valid Std data for {self.selected_element}")
                 calibration_min = 0
                 calibration_max = 0
                 calibration_range = "[0 to 0]"
@@ -194,22 +186,13 @@ class PivotPlotDialog(QDialog):
                 calibration_max = max(std_data_numeric)
                 calibration_range = f"[{self.format_number(calibration_min)} to {self.format_number(calibration_max)}]"
 
-            # Calculate Soln Conc range for samples
             sample_data = self.parent.original_df[
                 (self.parent.original_df['Type'].isin(['Samp', 'Sample'])) &
                 (self.parent.original_df['Element'] == self.selected_element)
             ]['Soln Conc']
-            self.logger.debug(f"Raw Sample data for {self.selected_element}: {sample_data.tolist()}")
-            sample_data_numeric = []
-            for x in sample_data:
-                if self.is_numeric(x):
-                    try:
-                        sample_data_numeric.append(float(x))
-                    except (ValueError, TypeError) as e:
-                        self.logger.warning(f"Failed to convert Sample value '{x}' to float: {str(e)}")
-            self.logger.debug(f"Numeric Sample data for {self.selected_element}: {sample_data_numeric}")
+            sample_data_numeric = [float(x) for x in sample_data if self.is_numeric(x)]
             if not sample_data_numeric:
-                self.logger.warning(f"No valid numeric Sample data for element: {self.selected_element}")
+                self.logger.warning(f"No valid Sample data for {self.selected_element}")
                 soln_conc_min = '---'
                 soln_conc_max = '---'
                 soln_conc_range = '---'
@@ -223,11 +206,9 @@ class PivotPlotDialog(QDialog):
                     calibration_min <= soln_conc_max <= calibration_max
                 ) if calibration_min != 0 or calibration_max != 0 else False
 
-            # Select optimal blank value
             blank_rows = self.parent.pivot_data[
                 self.parent.pivot_data['Solution Label'].str.contains(r'CRM\s*BLANK', case=False, na=False, regex=True)
             ]
-            self.logger.debug(f"Blank rows: {blank_rows.to_dict('records')}")
             blank_val = 0
             blank_correction_status = "Not Applied"
             selected_blank_label = "None"
@@ -243,7 +224,6 @@ class PivotPlotDialog(QDialog):
                         self.logger.debug(f"Skipping non-numeric blank value '{candidate_blank}' for label '{candidate_label}'")
                         continue
                     candidate_blank = float(candidate_blank)
-                    # Check if this blank brings any pivot value into range
                     in_range = False
                     for sol_label in self.parent._inline_crm_rows_display.keys():
                         if sol_label in blank_rows['Solution Label'].values:
@@ -261,9 +241,8 @@ class PivotPlotDialog(QDialog):
                                 if not self.is_numeric(val):
                                     continue
                                 crm_val = float(val)
-                                range_val = crm_val * (self.range_percent / 100)
-                                lower = crm_val - range_val
-                                upper = crm_val + range_val
+                                range_val = self.parent.calculate_dynamic_range(crm_val)
+                                lower, upper = crm_val - range_val, crm_val + range_val
                                 corrected_pivot = pivot_val_float - candidate_blank
                                 if lower <= corrected_pivot <= upper:
                                     in_range = True
@@ -274,9 +253,7 @@ class PivotPlotDialog(QDialog):
                         best_blank_val = candidate_blank
                         best_blank_label = candidate_label
                         in_range_found = True
-                        self.logger.debug(f"Selected blank value {best_blank_val} from '{best_blank_label}' because it brings a pivot value into range")
                         break
-                    # If no blank brings pivot into range, choose the one that minimizes distance to crm_val
                     if not in_range_found:
                         for sol_label in self.parent._inline_crm_rows_display.keys():
                             if sol_label in blank_rows['Solution Label'].values:
@@ -303,14 +280,12 @@ class PivotPlotDialog(QDialog):
                 blank_val = best_blank_val
                 selected_blank_label = best_blank_label
                 blank_correction_status = "Applied" if blank_val != 0 else "Not Applied"
-                self.logger.debug(f"Selected blank value: {blank_val} from '{selected_blank_label}'")
 
             crm_labels = [
                 label for label in self.parent._inline_crm_rows_display.keys()
                 if label not in blank_rows['Solution Label'].values
                 and label in self.parent.included_crms and self.parent.included_crms[label].isChecked()
             ]
-            self.logger.debug(f"CRM labels: {crm_labels}")
 
             crm_id_to_labels = {}
             for sol_label in crm_labels:
@@ -341,27 +316,20 @@ class PivotPlotDialog(QDialog):
                 for sol_label in crm_id_to_labels[crm_id]:
                     pivot_row = self.parent.pivot_data[self.parent.pivot_data['Solution Label'] == sol_label]
                     if pivot_row.empty:
-                        self.logger.warning(f"No pivot data for Solution Label: {sol_label}")
+                        self.logger.warning(f"No pivot data for {sol_label}")
                         continue
                     pivot_val = pivot_row.iloc[0][self.selected_element]
-                    self.logger.debug(f"Processing {sol_label}: pivot_val={pivot_val}, type={type(pivot_val)}")
-                    
-                    if pd.isna(pivot_val) or pivot_val is None:
+                    if pd.isna(pivot_val) or not self.is_numeric(pivot_val):
                         self.logger.warning(f"Invalid pivot value for {sol_label}: {pivot_val}")
                         pivot_val = 0
-                    elif not self.is_numeric(pivot_val):
-                        self.logger.warning(f"Non-numeric pivot value for {sol_label}: {pivot_val}")
-                        pivot_val = 0
-                    
+                    else:
+                        pivot_val = float(pivot_val)
+
                     sample_rows = self.parent.original_df[
                         (self.parent.original_df['Solution Label'] == sol_label) &
                         (self.parent.original_df['Element'].str.startswith(element_name)) &
                         (self.parent.original_df['Type'].isin(['Samp', 'Sample']))
                     ]
-                    if sample_rows.empty:
-                        self.logger.warning(f"No sample rows found for Solution Label: {sol_label}, Element: {element_name}")
-                    else:
-                        self.logger.debug(f"Sample rows for {sol_label}: {sample_rows[['Solution Label', 'Element', 'Soln Conc', 'Int']].to_dict('records')}")
                     soln_conc = sample_rows['Soln Conc'].iloc[0] if not sample_rows.empty else '---'
                     int_val = sample_rows['Int'].iloc[0] if not sample_rows.empty else '---'
                     
@@ -375,12 +343,10 @@ class PivotPlotDialog(QDialog):
                     for row_data, _ in self.parent._inline_crm_rows_display[sol_label]:
                         if isinstance(row_data, list) and row_data and row_data[0].endswith("CRM"):
                             val = row_data[self.parent.pivot_data.columns.get_loc(self.selected_element)] if self.selected_element in self.parent.pivot_data.columns else ""
-                            if not val or not val.strip():
-                                self.logger.warning(f"Empty or invalid CRM value for {sol_label}: {val}")
-                                continue
-                            if not self.is_numeric(val) or not self.is_numeric(pivot_val):
+                            if not val or not self.is_numeric(val):
+                                self.logger.warning(f"Invalid CRM value for {sol_label}: {val}")
                                 annotation = f"Verification ID: {crm_id} (Label: {sol_label})"
-                                annotation += f"\n  - Certificate Value: {val}"
+                                annotation += f"\n  - Certificate Value: {val or 'N/A'}"
                                 annotation += f"\n  - Sample Value: {self.format_number(pivot_val)}"
                                 annotation += f"\n  - Acceptable Range: [N/A]"
                                 annotation += f"\n  - Status: Out of range (non-numeric data)."
@@ -398,86 +364,82 @@ class PivotPlotDialog(QDialog):
                                 annotation += f"\n  - Element Wavelength: {wavelength}"
                                 annotation += f"\n  - Analysis Date: {analysis_date}"
                                 self.annotations.append(annotation)
-                                self.logger.debug(f"Non-numeric data detected for {sol_label}: Certificate={val}, Sample={pivot_val}")
                                 continue
 
-                            try:
-                                crm_val = float(val)
-                                pivot_val_float = float(pivot_val)
-                                range_val = crm_val * (self.range_percent / 100)
-                                lower = crm_val - range_val
-                                upper = crm_val + range_val
-                                in_range = lower <= pivot_val_float <= upper
+                            crm_val = float(val)
+                            pivot_val_float = float(pivot_val)
+                            range_val = self.parent.calculate_dynamic_range(crm_val)
+                            lower = crm_val - range_val
+                            upper = crm_val + range_val
+                            in_range = lower <= pivot_val_float <= upper
 
-                                annotation = f"Verification ID: {crm_id} (Label: {sol_label})"
-                                annotation += f"\n  - Certificate Value: {self.format_number(crm_val)}"
-                                annotation += f"\n  - Sample Value: {self.format_number(pivot_val_float)}"
-                                annotation += f"\n  - Acceptable Range: [{self.format_number(lower)} to {self.format_number(upper)}]"
-                                corrected_in_range = False
-                                if in_range:
-                                    annotation += f"\n  - Status: In range (no adjustment needed)."
-                                    corrected_pivot = pivot_val_float
-                                    corrected_in_range = True
-                                    annotation += f"\n  - Blank Value: {self.format_number(blank_val)}"
-                                    annotation += f"\n  - Blank Label: {selected_blank_label}"
-                                    annotation += f"\n  - Blank Correction Status: Not Applied (in range)"
-                                    annotation += f"\n  - Corrected Sample Value: {self.format_number(corrected_pivot)}"
+                            annotation = f"Verification ID: {crm_id} (Label: {sol_label})"
+                            annotation += f"\n  - Certificate Value: {self.format_number(crm_val)}"
+                            annotation += f"\n  - Sample Value: {self.format_number(pivot_val_float)}"
+                            annotation += f"\n  - Acceptable Range: [{self.format_number(lower)} to {self.format_number(upper)}]"
+                            corrected_in_range = False
+                            if in_range:
+                                annotation += f"\n  - Status: In range (no adjustment needed)."
+                                corrected_pivot = pivot_val_float
+                                corrected_in_range = True
+                                annotation += f"\n  - Blank Value: {self.format_number(blank_val)}"
+                                annotation += f"\n  - Blank Label: {selected_blank_label}"
+                                annotation += f"\n  - Blank Correction Status: Not Applied (in range)"
+                                annotation += f"\n  - Sample Value - Blank: {self.format_number(corrected_pivot)}"
+                                annotation += f"\n  - Status after Blank Subtraction: In range."
+                            else:
+                                annotation += f"\n  - Status: Out of range without adjustment."
+                                corrected_pivot = pivot_val_float - blank_val
+                                annotation += f"\n  - Blank Value: {self.format_number(blank_val)}"
+                                annotation += f"\n  - Blank Label: {selected_blank_label}"
+                                annotation += f"\n  - Blank Correction Status: {blank_correction_status}"
+                                annotation += f"\n  - Sample Value - Blank: {self.format_number(corrected_pivot)}"
+                                annotation += f"\n  - Corrected Range: [{self.format_number(lower)} to {self.format_number(upper)}]"
+                                corrected_in_range = lower <= corrected_pivot <= upper
+                                if corrected_in_range:
                                     annotation += f"\n  - Status after Blank Subtraction: In range."
                                 else:
-                                    annotation += f"\n  - Status: Out of range without adjustment."
-                                    corrected_pivot = pivot_val_float - blank_val
-                                    annotation += f"\n  - Blank Value: {self.format_number(blank_val)}"
-                                    annotation += f"\n  - Blank Label: {selected_blank_label}"
-                                    annotation += f"\n  - Blank Correction Status: {blank_correction_status}"
-                                    annotation += f"\n  - Sample Value - Blank: {self.format_number(corrected_pivot)}"
-                                    annotation += f"\n  - Corrected Range: [{self.format_number(lower)} to {self.format_number(upper)}]"
-                                    corrected_in_range = lower <= corrected_pivot <= upper
-                                    if corrected_in_range:
-                                        annotation += f"\n  - Status after Blank Subtraction: In range."
-                                    else:
-                                        annotation += f"\n  - Status after Blank Subtraction: Out of range."
-                                        if corrected_pivot != 0:
-                                            if corrected_pivot < lower:
-                                                scale_factor = lower / corrected_pivot
-                                                direction = "increase"
-                                            elif corrected_pivot > upper:
-                                                scale_factor = upper / corrected_pivot
-                                                direction = "decrease"
-                                            else:
-                                                scale_factor = 1.0
-                                                direction = ""
-                                            scale_percent = abs((scale_factor - 1) * 100)
-                                            annotation += f"\n  - Required Scaling: {scale_percent:.2f}% {direction} to fit within range."
-                                            if scale_percent > float(self.max_correction_percent.text()):
-                                                annotation += f"\n  - Warning: Scaling exceeds {self.max_correction_percent.text()}% ({scale_percent:.2f}%). This point is problematic and may require further investigation."
+                                    annotation += f"\n  - Status after Blank Subtraction: Out of range."
+                                    if corrected_pivot != 0:
+                                        if corrected_pivot < lower:
+                                            scale_factor = lower / corrected_pivot
+                                            direction = "increase"
+                                        elif corrected_pivot > upper:
+                                            scale_factor = upper / corrected_pivot
+                                            direction = "decrease"
                                         else:
-                                            annotation += f"\n  - Scaling not applicable (corrected sample value is zero)."
-                                
-                                annotation += f"\n  - Soln Conc: {soln_conc if isinstance(soln_conc, str) else self.format_number(soln_conc)} {'in_range' if in_calibration_range_soln else 'out_range'}"
-                                annotation += f"\n  - Int: {int_val if isinstance(int_val, str) else self.format_number(int_val)}"
-                                annotation += f"\n  - Calibration Range: {calibration_range} {'in_range' if in_calibration_range_soln else 'out_range'}"
-                                annotation += f"\n  - CRM Source: {crm_source}"
-                                annotation += f"\n  - Sample Matrix: {sample_matrix}"
-                                annotation += f"\n  - Element Wavelength: {wavelength}"
-                                annotation += f"\n  - Analysis Date: {analysis_date}"
+                                            scale_factor = 1.0
+                                            direction = ""
+                                        scale_percent = abs((scale_factor - 1) * 100)
+                                        annotation += f"\n  - Required Scaling: {scale_percent:.2f}% {direction} to fit within range."
+                                        if scale_percent > float(self.max_correction_percent.text()):
+                                            annotation += f"\n  - Warning: Scaling exceeds {self.max_correction_percent.text()}% ({scale_percent:.2f}%)."
+                                    else:
+                                        annotation += f"\n  - Scaling not applicable (corrected sample value is zero)."
+                            
+                            annotation += f"\n  - Soln Conc: {soln_conc if isinstance(soln_conc, str) else self.format_number(soln_conc)} {'in_range' if in_calibration_range_soln else 'out_range'}"
+                            annotation += f"\n  - Int: {int_val if isinstance(int_val, str) else self.format_number(int_val)}"
+                            annotation += f"\n  - Calibration Range: {calibration_range} {'in_range' if in_calibration_range_soln else 'out_range'}"
+                            annotation += f"\n  - CRM Source: {crm_source}"
+                            annotation += f"\n  - Sample Matrix: {sample_matrix}"
+                            annotation += f"\n  - Element Wavelength: {wavelength}"
+                            annotation += f"\n  - Analysis Date: {analysis_date}"
 
-                                self.annotations.append(annotation)
-                                
-                                certificate_values[crm_id].append(crm_val)
-                                sample_values[crm_id].append(pivot_val_float)
-                                corrected_sample_values[crm_id].append(corrected_pivot)
-                                lower_bounds[crm_id].append(lower)
-                                upper_bounds[crm_id].append(upper)
-                                soln_concs[crm_id].append(soln_conc)
-                                int_values[crm_id].append(int_val)
-                            except:
-                                pass
+                            self.annotations.append(annotation)
+                            
+                            certificate_values[crm_id].append(crm_val)
+                            sample_values[crm_id].append(pivot_val_float)
+                            corrected_sample_values[crm_id].append(corrected_pivot)
+                            lower_bounds[crm_id].append(lower)
+                            upper_bounds[crm_id].append(upper)
+                            soln_concs[crm_id].append(soln_conc)
+                            int_values[crm_id].append(int_val)
 
             if not unique_crm_ids:
                 self.main_plot.clear()
                 self.legend.clear()
-                self.logger.warning(f"No valid Verification data for {self.selected_element}. CRM labels: {crm_labels}")
-                QMessageBox.warning(self, "Warning", f"No valid Verification data for {self.selected_element}. Please check data for CRM labels: {', '.join(crm_labels) if crm_labels else 'None'}")
+                self.logger.warning(f"No valid Verification data for {self.selected_element}")
+                QMessageBox.warning(self, "Warning", f"No valid Verification data for {self.selected_element}")
                 return
 
             self.main_plot.setLabel('bottom', 'Verification ID')
@@ -517,7 +479,6 @@ class PivotPlotDialog(QDialog):
                     )
                     self.legend.addItem(scatter, 'Certificate Value')
                     added_legend_names.add('Certificate Value')
-                    self.logger.debug("Added Certificate Value to legend")
 
             if self.show_pivot_crm.isChecked():
                 for crm_id in unique_crm_ids:
@@ -537,7 +498,6 @@ class PivotPlotDialog(QDialog):
                     )
                     self.legend.addItem(scatter, 'Sample Value')
                     added_legend_names.add('Sample Value')
-                    self.logger.debug("Added Sample Value to legend")
 
             if self.show_range.isChecked():
                 for crm_id in unique_crm_ids:
@@ -563,16 +523,13 @@ class PivotPlotDialog(QDialog):
                     )
                     self.legend.addItem(range_item, 'Acceptable Range')
                     added_legend_names.add('Acceptable Range')
-                    self.logger.debug("Added Acceptable Range to legend")
 
             self.main_plot.showGrid(x=True, y=True, alpha=0.3)
-            current_legend_items = [item[1].name() for item in self.legend.items if hasattr(item[1], 'name')]
-            self.logger.debug(f"Legend items after update: {current_legend_items}")
 
         except Exception as e:
             self.main_plot.clear()
             self.legend.clear()
-            self.logger.error(f"Failed to update plot: {str(e)}", exc_info=True)
+            self.logger.error(f"Failed to update plot: {str(e)}")
             QMessageBox.warning(self, "Error", f"Failed to update plot: {str(e)}")
 
     def open_select_crms_window(self):

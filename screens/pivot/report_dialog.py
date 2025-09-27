@@ -6,11 +6,13 @@ import numpy as np
 from scipy.optimize import differential_evolution
 from scipy.special import huber
 from collections import defaultdict
+import logging
 
 class ReportDialog(QDialog):
     """Dialog to display table-based CRM analysis report with scrollable column visibility toggles and textual decision analysis."""
     def __init__(self, parent, annotations):
         super().__init__(parent)
+        self.logger = logging.getLogger(__name__)
         self.annotations = annotations
         self.setWindowTitle("Professional CRM Analysis Report")
 
@@ -18,14 +20,14 @@ class ReportDialog(QDialog):
         screen = QGuiApplication.primaryScreen().size()
         self.setGeometry(0, 200, screen.width(), 700)
         
-        # Initialize column visibility dictionary (not all checked by default)
+        # Initialize column visibility dictionary
         self.column_visibility = {
             'Verification ID': True,
             'Certificate Value': True,
             'Sample Value': True,
             'Acceptable Range': True,
             'Blank Value': False,
-            'Blank Label': False,  # Added Blank Label column
+            'Blank Label': False,
             'Blank Correction Status': False,
             'Sample Value - Blank': False,
             'Soln Conc': True,
@@ -45,7 +47,7 @@ class ReportDialog(QDialog):
         scroll_area.setWidgetResizable(True)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll_area.setFixedHeight(50)  # Adjust height to fit checkboxes
+        scroll_area.setFixedHeight(50)
         
         checkbox_widget = QWidget()
         checkbox_layout = QHBoxLayout(checkbox_widget)
@@ -99,6 +101,21 @@ class ReportDialog(QDialog):
             self.column_visibility[column] = checkbox.isChecked()
         self.generate_html_report()
 
+    def is_numeric(self, value):
+        """Check if a value is numeric."""
+        try:
+            float(value)
+            return True
+        except (ValueError, TypeError):
+            return False
+
+    def is_numeric_range(self, range_str):
+        """Check if a range string is in the format [number to number], allowing negative numbers and decimals."""
+        if not range_str or not isinstance(range_str, str):
+            return False
+        # Match ranges like [-1.8 to 2.2], [1.5 to 3.7], [-0.1 to -0.5], etc.
+        return bool(re.match(r'\[(-?[\d.]+) to (-?[\d.]+)\]', range_str))
+
     def generate_html_report(self):
         """Generate HTML report with only visible columns and add textual decision analysis."""
         html = """
@@ -131,16 +148,17 @@ class ReportDialog(QDialog):
                 html += f"<th>{column}</th>"
         html += "</tr>"
 
-        crm_data = []  # Collect for decision analysis
+        crm_data = []
         for annotation in self.annotations:
             lines = annotation.split('\n')
             if not lines:
+                self.logger.warning("Empty annotation encountered")
                 continue
             
             verification_id_match = re.match(r'Verification ID: (\w+) \(Label: .+\)', lines[0].strip())
             verification_id = verification_id_match.group(1) if verification_id_match else "Unknown"
             
-            # Initialize variables for all possible columns
+            # Initialize variables for all columns
             certificate_val = sample_val = acceptable_range = blank_val = blank_label = blank_correction_status = corrected_sample_val = soln_conc = int_val = calibration_range = icp_recovery = icp_status = detection_limit = rsd_percent = scaling = ""
             sample_val_class = corrected_sample_val_class = soln_conc_class = icp_status_class = ""
             
@@ -168,14 +186,16 @@ class ReportDialog(QDialog):
                 elif "Sample Value - Blank:" in line:
                     corrected_sample_val = line.split(": ")[1].strip()
                     # Verify if Sample Value - Blank is within Acceptable Range
-                    try:
-                        corrected_val = float(corrected_sample_val)
-                        range_match = re.match(r'\[([\d.]+) to ([\d.]+)\]', acceptable_range)
-                        if range_match:
-                            lower, upper = float(range_match.group(1)), float(range_match.group(2))
-                            corrected_sample_val_class = 'in-range' if lower <= corrected_val <= upper else 'out-range'
-                    except (ValueError, TypeError):
-                        corrected_sample_val_class = 'out-range'
+                    if self.is_numeric(corrected_sample_val) and self.is_numeric_range(acceptable_range):
+                        try:
+                            corrected_val = float(corrected_sample_val)
+                            range_match = re.match(r'\[(-?[\d.]+) to (-?[\d.]+)\]', acceptable_range)
+                            if range_match:
+                                lower, upper = float(range_match.group(1)), float(range_match.group(2))
+                                corrected_sample_val_class = 'in-range' if lower <= corrected_val <= upper else 'out-range'
+                        except (ValueError, TypeError) as e:
+                            self.logger.warning(f"Failed to verify corrected sample value: {corrected_sample_val}, error: {str(e)}")
+                            corrected_sample_val_class = 'out-range'
                 elif "Soln Conc:" in line:
                     parts = line.split(": ", 1)[1].rsplit(" ", 1)
                     soln_conc = parts[0].strip()
@@ -198,7 +218,7 @@ class ReportDialog(QDialog):
                     scaling_match = re.search(r'Required Scaling: ([\d.]+)% (increase|decrease)', line)
                     if scaling_match:
                         scaling = f"{scaling_match.group(1)}% {scaling_match.group(2)}"
-                        if "Scaling exceeds 200%" in line:
+                        if "Scaling exceeds" in line:
                             scaling = f'<span class="problematic">{scaling} (Problematic)</span>'
             
             # Map column names to their values and classes
@@ -208,7 +228,7 @@ class ReportDialog(QDialog):
                 'Sample Value': (sample_val, sample_val_class),
                 'Acceptable Range': (acceptable_range, ''),
                 'Blank Value': (blank_val, ''),
-                'Blank Label': (blank_label, ''),  # Added Blank Label
+                'Blank Label': (blank_label, ''),
                 'Blank Correction Status': (blank_correction_status, ''),
                 'Sample Value - Blank': (corrected_sample_val, corrected_sample_val_class),
                 'Soln Conc': (soln_conc, soln_conc_class),
@@ -228,26 +248,34 @@ class ReportDialog(QDialog):
                     html += f'<td class="{css_class}">{value}</td>'
             html += "</tr>"
             
-            # Collect for decision analysis (parse numbers where possible)
+            # Collect for decision analysis
             try:
-                crm_entry = {
-                    'id': verification_id,
-                    'cert_val': float(certificate_val) if certificate_val else None,
-                    'sample_val': float(sample_val) if sample_val else None,
-                    'lower': float(re.match(r'\[([\d.]+) to ([\d.]+)\]', acceptable_range).group(1)) if acceptable_range else None,
-                    'upper': float(re.match(r'\[([\d.]+) to ([\d.]+)\]', acceptable_range).group(2)) if acceptable_range else None,
-                    'blank_val': float(blank_val) if blank_val else 0,
-                    'soln_conc': float(soln_conc) if soln_conc else None,
-                    'wavelength': 'default'  # Extend if multiple
-                }
-                if all(v is not None for v in [crm_entry['cert_val'], crm_entry['sample_val'], crm_entry['lower'], crm_entry['upper']]):
-                    crm_data.append(crm_entry)
-            except:
-                pass
+                if (self.is_numeric(certificate_val) and 
+                    self.is_numeric(sample_val) and 
+                    self.is_numeric_range(acceptable_range)):
+                    range_match = re.match(r'\[(-?[\d.]+) to (-?[\d.]+)\]', acceptable_range)
+                    if range_match:
+                        crm_entry = {
+                            'id': verification_id,
+                            'cert_val': float(certificate_val),
+                            'sample_val': float(sample_val),
+                            'lower': float(range_match.group(1)),
+                            'upper': float(range_match.group(2)),
+                            'blank_val': float(blank_val) if self.is_numeric(blank_val) else 0,
+                            'soln_conc': float(soln_conc) if self.is_numeric(soln_conc) else None,
+                            'wavelength': 'default'
+                        }
+                        crm_data.append(crm_entry)
+                    else:
+                        self.logger.warning(f"Invalid range format for {verification_id}: {acceptable_range}")
+                else:
+                    self.logger.warning(f"Non-numeric or missing data for {verification_id}: cert_val={certificate_val}, sample_val={sample_val}, range={acceptable_range}")
+            except Exception as e:
+                self.logger.error(f"Error parsing CRM data for {verification_id}: {str(e)}")
         
         html += "</table>"
         
-        # Add textual decision analysis section with three models
+        # Add textual decision analysis section
         html += self.generate_decision_analysis(crm_data)
         
         html += """
@@ -259,6 +287,7 @@ class ReportDialog(QDialog):
     def generate_decision_analysis(self, crm_data):
         """Generate textual decision analysis based on conditions, line by line, with final professional decision using three models."""
         if not crm_data:
+            self.logger.warning("No sufficient data for decision analysis")
             return "<div class='decision-section'><h2>Decision Analysis</h2><p>No sufficient data for analysis.</p></div>"
         
         analysis_html = "<div class='decision-section'><h2>Decision Analysis</h2><ul>"
@@ -272,7 +301,7 @@ class ReportDialog(QDialog):
         else:
             analysis_html += "Insufficient; consider additional adjustments.</li>"
         
-        # Condition 2: If blank insufficient, try adding dynamic increment to blank (no limits, use optimization with wide bounds)
+        # Condition 2: Try dynamic blank adjustment
         def objective_cond2(p):
             adjust = p[0]
             in_range = sum(d['lower'] <= (d['sample_val'] - d['blank_val'] + adjust) <= d['upper'] for d in crm_data)
@@ -283,32 +312,27 @@ class ReportDialog(QDialog):
         
         try:
             res_cond2 = differential_evolution(objective_cond2, adjust_bounds)
-            if res_cond2.success:
-                best_blank_adjust = res_cond2.x[0]
-                best_in_range = -res_cond2.fun
-            else:
-                best_blank_adjust = 0
-                best_in_range = in_range_with_blank
+            best_blank_adjust = res_cond2.x[0] if res_cond2.success else 0
+            best_in_range = -res_cond2.fun if res_cond2.success else in_range_with_blank
         except:
             best_blank_adjust = 0
             best_in_range = in_range_with_blank
         
-        analysis_html += f"<li>Condition 2: Adjusting blank by {best_blank_adjust:.3f} (dynamic increment, no limits), achieves {best_in_range}/{total} in range. "
+        analysis_html += f"<li>Condition 2: Adjusting blank by {best_blank_adjust:.3f}, achieves {best_in_range}/{total} in range. "
         if best_in_range / total >= 0.75:
             analysis_html += "No scaling needed; apply this blank adjustment globally.</li>"
         else:
             analysis_html += "Still insufficient; proceed to scaling.</li>"
         
-        # Condition 3: If majority (e.g., 75%) in range already or with blank, no scaling
+        # Condition 3: Check initial in-range count
         initial_in_range = sum(d['lower'] <= d['sample_val'] <= d['upper'] for d in crm_data)
         analysis_html += f"<li>Condition 3: Initially, {initial_in_range}/{total} in range. With blank: {in_range_with_blank}/{total}. "
         if initial_in_range / total >= 0.75 or in_range_with_blank / total >= 0.75:
-            analysis_html += "Majority in range; no scaling required. Apply blank subtraction if needed.</li>"
+            analysis_html += "Majority in range; no scaling required.</li>"
         else:
             analysis_html += "Minority in range; scaling may be necessary.</li>"
         
-        # Condition 4: For duplicate CRM IDs, if at least one in range, no scaling
-        # Group by ID
+        # Condition 4: Check duplicate CRM IDs
         id_groups = defaultdict(list)
         for d in crm_data:
             id_groups[d['id']].append(d)
@@ -331,18 +355,17 @@ class ReportDialog(QDialog):
             in_range = sum(d['lower'] <= d['sample_val'] <= d['upper'] for d in group)
             analysis_html += f"Magnitude 10^{mag}: {in_range}/{len(group)} in range. "
         if len(mag_groups) > 1:
-            analysis_html += "Apply adjustments selectively to low-performing groups without affecting others.</li>"
+            analysis_html += "Apply adjustments selectively to low-performing groups.</li>"
         else:
             analysis_html += "Uniform magnitude; global adjustment safe.</li>"
         
-        # Condition 6: Multiple wavelengths - select best Soln Conc
-        # Assuming single; extend with wavelength data
-        analysis_html += "<li>Condition 6: Assuming single wavelength. If multiple, select the one with Soln Conc in range or closest for scaling.</li>"
+        # Condition 6: Multiple wavelengths
+        analysis_html += "<li>Condition 6: Assuming single wavelength. If multiple, select best Soln Conc.</li>"
         
-        # Condition 7: If multiple scales, average where most stay in range (allow 1-2 out)
-        max_corr = 0.3  # Define max_corr here to match optimization section
+        # Condition 7: Average scaling
+        max_corr = 0.3
         possible_scales = [d['cert_val'] / d['sample_val'] if d['sample_val'] != 0 else 1 for d in crm_data]
-        possible_scales = [s for s in possible_scales if 1 - max_corr <= s <= 1 + max_corr]  # Filter within bounds
+        possible_scales = [s for s in possible_scales if 1 - max_corr <= s <= 1 + max_corr]
         if possible_scales:
             avg_scale = np.mean(possible_scales)
             in_range_with_avg = sum(d['lower'] <= d['sample_val'] * avg_scale <= d['upper'] for d in crm_data)
@@ -355,13 +378,13 @@ class ReportDialog(QDialog):
         
         analysis_html += "</ul>"
         
-        # Compute wide bounds for blank_adjust (no strict limits)
+        # Compute bounds for optimization
         avg_cert = np.mean([d['cert_val'] for d in crm_data])
         max_val = max([abs(d['sample_val']) for d in crm_data] + [abs(d['blank_val']) for d in crm_data] + [abs(avg_cert), 1])
         blank_bounds_wide = (-10 * max_val, 10 * max_val)
         scale_bounds = (1 - max_corr, 1 + max_corr)
         
-        # Model 1: Model A - Maximize in-range count with regularization (no penalty on blank)
+        # Model 1: Maximize in-range count
         def objective_a(params):
             blank_adjust, scale = params
             in_range_count = 0
@@ -369,7 +392,7 @@ class ReportDialog(QDialog):
                 adjusted_val = (d['sample_val'] - d['blank_val'] - blank_adjust) * scale
                 if d['lower'] <= adjusted_val <= d['upper']:
                     in_range_count += 1
-            reg = 10 * abs(scale - 1)  # No penalty on blank_adjust
+            reg = 10 * abs(scale - 1)
             return -in_range_count + reg / total
         
         bounds_a = [blank_bounds_wide, scale_bounds]
@@ -383,7 +406,6 @@ class ReportDialog(QDialog):
                     adjusted_val = (d['sample_val'] - d['blank_val'] - blank_adjust_a) * scale_a
                     if d['lower'] <= adjusted_val <= d['upper']:
                         in_range_after_a += 1
-                # Check blank only for model A
                 def objective_blank_a(p):
                     return objective_a([p[0], 1])
                 res_blank_a = differential_evolution(objective_blank_a, [blank_bounds_wide])
@@ -404,7 +426,7 @@ class ReportDialog(QDialog):
         except Exception as e:
             analysis_html += f'<div class="model-comparison"><strong>Model A:</strong> Error: {str(e)}.</div>'
         
-        # Model 2: Model B - Minimize distances with Huber loss and penalties (no penalty on blank)
+        # Model 2: Minimize distances with Huber loss
         def objective_b(params):
             blank_adjust, scale = params
             total_distance = 0.0
@@ -416,9 +438,9 @@ class ReportDialog(QDialog):
                     dist = adjusted_val - d['upper']
                 else:
                     dist = 0.0
-                total_distance += huber(1.0, dist)  # Robust loss
-            reg = 0.1 * (abs(scale - 1) * np.mean([abs(d['sample_val']) for d in crm_data]))  # No penalty on blank_adjust
-            return (total_distance / total) + reg  # No blank_penalty
+                total_distance += huber(1.0, dist)
+            reg = 0.1 * (abs(scale - 1) * np.mean([abs(d['sample_val']) for d in crm_data]))
+            return (total_distance / total) + reg
         
         bounds_b = [blank_bounds_wide, scale_bounds]
         
@@ -437,7 +459,6 @@ class ReportDialog(QDialog):
                         dist = min(abs(adjusted_val - d['lower']), abs(adjusted_val - d['upper']))
                         distances_b.append(dist)
                 avg_distance_b = np.mean(distances_b)
-                # Check blank only for model B
                 def objective_blank_b(p):
                     return objective_b([p[0], 1])
                 res_blank_b = differential_evolution(objective_blank_b, [blank_bounds_wide])
@@ -465,15 +486,15 @@ class ReportDialog(QDialog):
         except Exception as e:
             analysis_html += f'<div class="model-comparison"><strong>Model B:</strong> Error: {str(e)}.</div>'
 
-        # Model 3: Model C - Minimize sum of squared errors to cert_val with regularization (no penalty on blank)
+        # Model 3: Minimize sum of squared errors
         def objective_c(params):
             blank_adjust, scale = params
             total_sse = 0.0
             for d in crm_data:
                 adjusted_val = (d['sample_val'] - d['blank_val'] - blank_adjust) * scale
                 total_sse += (adjusted_val - d['cert_val']) ** 2
-            reg = 0.1 * (abs(scale - 1) * np.mean([abs(d['sample_val']) for d in crm_data]))  # No penalty on blank_adjust
-            return (total_sse / total) + reg  # No blank_penalty
+            reg = 0.1 * (abs(scale - 1) * np.mean([abs(d['sample_val']) for d in crm_data]))
+            return (total_sse / total) + reg
         
         bounds_c = [blank_bounds_wide, scale_bounds]
         
@@ -492,7 +513,6 @@ class ReportDialog(QDialog):
                         dist = min(abs(adjusted_val - d['lower']), abs(adjusted_val - d['upper']))
                         distances_c.append(dist)
                 avg_distance_c = np.mean(distances_c)
-                # Check blank only for model C
                 def objective_blank_c(p):
                     return objective_c([p[0], 1])
                 res_blank_c = differential_evolution(objective_blank_c, [blank_bounds_wide])
@@ -520,7 +540,7 @@ class ReportDialog(QDialog):
         except Exception as e:
             analysis_html += f'<div class="model-comparison"><strong>Model C:</strong> Error: {str(e)}.</div>'
         
-        # Comparison and Final Decision
+        # Model Comparison and Final Decision
         initial_distances = [0 if d['lower'] <= d['sample_val'] <= d['upper'] else min(abs(d['sample_val'] - d['lower']), abs(d['sample_val'] - d['upper'])) for d in crm_data]
         avg_distance_initial = np.mean(initial_distances)
         
@@ -533,7 +553,6 @@ class ReportDialog(QDialog):
             models.append(('C', in_range_after_c, blank_adjust_c, scale_c, avg_distance_c))
         
         if models:
-            # Select best model: highest in-range, then lowest avg distance if applicable
             best_model = max(models, key=lambda m: (m[1], -m[4] if isinstance(m[4], float) else float('inf')))
             recommended_blank = best_model[2]
             recommended_scale = best_model[3]
@@ -553,7 +572,7 @@ class ReportDialog(QDialog):
         # Final decision
         if recommended_in_range > initial_in_range:
             if recommended_in_range == total:
-                recommended_action = f"Apply the recommended correction; all data will be in range."
+                recommended_action = "Apply the recommended correction; all data will be in range."
             elif recommended_in_range >= max(0.75 * total, total - 2):
                 recommended_action = f"Apply the recommended correction; majority ({recommended_in_range}/{total}) in range."
             else:
