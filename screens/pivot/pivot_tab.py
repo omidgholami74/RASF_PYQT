@@ -171,7 +171,7 @@ class PivotTab(QWidget):
         col_filter_btn.clicked.connect(self.open_column_filter_window)
         control_layout.addWidget(col_filter_btn)
         
-        check_rm_btn = QPushButton("Check RM")
+        check_rm_btn = QPushButton("Check CRM")
         check_rm_btn.clicked.connect(self.crm_manager.check_rm)
         control_layout.addWidget(check_rm_btn)
         
