@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QCheckBox, QScrollArea, QWidget, QLabel
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QCheckBox, QScrollArea, QWidget, QLabel, QMessageBox
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtCore import Qt
 import re
@@ -40,6 +40,19 @@ class ReportDialog(QDialog):
             'Required Scaling (%)': False
         }
         
+        # Store decision analysis results
+        self.decision_data = {
+            'recommended_blank': 0.0,
+            'recommended_scale': 1.0,
+            'recommended_in_range': 0,
+            'recommended_avg_distance': "N/A",
+            'final_decision': "Calculating..."
+        }
+        
+        self.setup_ui()
+        self.logger.debug(f"Initialized ReportDialog with {len(annotations)} annotations")
+
+    def setup_ui(self):
         layout = QVBoxLayout(self)
         
         # Add scrollable checkbox area
@@ -97,9 +110,14 @@ class ReportDialog(QDialog):
 
     def update_report(self):
         """Update column visibility and regenerate the report."""
-        for column, checkbox in self.checkboxes.items():
-            self.column_visibility[column] = checkbox.isChecked()
-        self.generate_html_report()
+        try:
+            for column, checkbox in self.checkboxes.items():
+                self.column_visibility[column] = checkbox.isChecked()
+            self.generate_html_report()
+            self.logger.debug("Updated report with new column visibility")
+        except Exception as e:
+            self.logger.error(f"Error updating report: {str(e)}")
+            QMessageBox.warning(self, "Error", f"Failed to update report: {str(e)}")
 
     def is_numeric(self, value):
         """Check if a value is numeric."""
@@ -113,181 +131,186 @@ class ReportDialog(QDialog):
         """Check if a range string is in the format [number to number], allowing negative numbers and decimals."""
         if not range_str or not isinstance(range_str, str):
             return False
-        # Match ranges like [-1.8 to 2.2], [1.5 to 3.7], [-0.1 to -0.5], etc.
         return bool(re.match(r'\[(-?[\d.]+) to (-?[\d.]+)\]', range_str))
 
     def generate_html_report(self):
         """Generate HTML report with only visible columns and add textual decision analysis."""
-        html = """
-        <html>
-        <head>
-            <style>
-                body { font-family: 'Segoe UI', sans-serif; color: #333; line-height: 1.6; }
-                h1 { color: #007bff; text-align: center; margin-bottom: 20px; }
-                h2 { color: #0056b3; margin-top: 30px; }
-                .problematic { color: #dc3545; font-weight: bold; }
-                .in-range { background-color: #d4edda; }
-                .out-range { background-color: #f8d7da; }
-                table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-                th, td { border: 1px solid #dee2e6; padding: 8px; text-align: left; color: #333; }
-                th { background-color: #007bff; color: white; }
-                .decision-section { margin-top: 40px; padding: 15px; background-color: #e9ecef; border-radius: 8px; }
-                .decision-section ul { list-style-type: disc; margin-left: 20px; }
-            </style>
-        </head>
-        <body>
-            <h1>CRM Analysis Report</h1>
-            <h2>Table Report</h2>
-            <table>
-                <tr>
-        """
-        
-        # Add table headers for visible columns only
-        for column in self.column_visibility:
-            if self.column_visibility[column]:
-                html += f"<th>{column}</th>"
-        html += "</tr>"
-
-        crm_data = []
-        for annotation in self.annotations:
-            lines = annotation.split('\n')
-            if not lines:
-                self.logger.warning("Empty annotation encountered")
-                continue
+        try:
+            html = """
+            <html>
+            <head>
+                <style>
+                    body { font-family: 'Segoe UI', sans-serif; color: #333; line-height: 1.6; }
+                    h1 { color: #007bff; text-align: center; margin-bottom: 20px; }
+                    h2 { color: #0056b3; margin-top: 30px; }
+                    .problematic { color: #dc3545; font-weight: bold; }
+                    .in-range { background-color: #d4edda; }
+                    .out-range { background-color: #f8d7da; }
+                    table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+                    th, td { border: 1px solid #dee2e6; padding: 8px; text-align: left; color: #333; }
+                    th { background-color: #007bff; color: white; }
+                    .decision-section { margin-top: 40px; padding: 15px; background-color: #e9ecef; border-radius: 8px; }
+                    .decision-section ul { list-style-type: disc; margin-left: 20px; }
+                </style>
+            </head>
+            <body>
+                <h1>CRM Analysis Report</h1>
+                <h2>Table Report</h2>
+                <table>
+                    <tr>
+            """
             
-            verification_id_match = re.match(r'Verification ID: (\w+) \(Label: .+\)', lines[0].strip())
-            verification_id = verification_id_match.group(1) if verification_id_match else "Unknown"
-            
-            # Initialize variables for all columns
-            certificate_val = sample_val = acceptable_range = blank_val = blank_label = blank_correction_status = corrected_sample_val = soln_conc = int_val = calibration_range = icp_recovery = icp_status = detection_limit = rsd_percent = scaling = ""
-            sample_val_class = corrected_sample_val_class = soln_conc_class = icp_status_class = ""
-            
-            # Parse annotation lines
-            for line in lines[1:]:
-                line = line.strip()
-                if not line:
-                    continue
-                if "Certificate Value:" in line:
-                    certificate_val = line.split(": ")[1].strip()
-                elif "Sample Value:" in line:
-                    sample_val = line.split(": ")[1].strip()
-                elif "Acceptable Range:" in line:
-                    acceptable_range = line.split(": ")[1].strip()
-                elif "Status: In range" in line:
-                    sample_val_class = 'in-range'
-                elif "Status: Out of range" in line:
-                    sample_val_class = 'out-range'
-                elif "Blank Value:" in line:
-                    blank_val = line.split(": ")[1].strip()
-                elif "Blank Label:" in line:
-                    blank_label = line.split(": ")[1].strip()
-                elif "Blank Correction Status:" in line:
-                    blank_correction_status = line.split(": ")[1].strip()
-                elif "Sample Value - Blank:" in line:
-                    corrected_sample_val = line.split(": ")[1].strip()
-                    # Verify if Sample Value - Blank is within Acceptable Range
-                    if self.is_numeric(corrected_sample_val) and self.is_numeric_range(acceptable_range):
-                        try:
-                            corrected_val = float(corrected_sample_val)
-                            range_match = re.match(r'\[(-?[\d.]+) to (-?[\d.]+)\]', acceptable_range)
-                            if range_match:
-                                lower, upper = float(range_match.group(1)), float(range_match.group(2))
-                                corrected_sample_val_class = 'in-range' if lower <= corrected_val <= upper else 'out-range'
-                        except (ValueError, TypeError) as e:
-                            self.logger.warning(f"Failed to verify corrected sample value: {corrected_sample_val}, error: {str(e)}")
-                            corrected_sample_val_class = 'out-range'
-                elif "Soln Conc:" in line:
-                    parts = line.split(": ", 1)[1].rsplit(" ", 1)
-                    soln_conc = parts[0].strip()
-                    soln_conc_status = parts[1].strip() if len(parts) > 1 else ""
-                    soln_conc_class = 'in-range' if soln_conc_status == 'in_range' else 'out-range'
-                elif "Int:" in line:
-                    int_val = line.split(": ")[1].strip()
-                elif "Calibration Range:" in line:
-                    calibration_range = line.split(": ", 1)[1].rsplit(" ", 1)[0].strip()
-                elif "ICP Recovery:" in line:
-                    icp_recovery = line.split(": ", 1)[1].rsplit(" ", 1)[0].strip()
-                elif "ICP Status:" in line:
-                    icp_status = line.split(": ")[1].strip()
-                    icp_status_class = 'in-range' if icp_status == 'In Range' else 'out-range'
-                elif "ICP Detection Limit:" in line:
-                    detection_limit = line.split(": ")[1].strip()
-                elif "ICP RSD%:" in line:
-                    rsd_percent = line.split(": ")[1].strip()
-                elif "Required Scaling:" in line:
-                    scaling_match = re.search(r'Required Scaling: ([\d.]+)% (increase|decrease)', line)
-                    if scaling_match:
-                        scaling = f"{scaling_match.group(1)}% {scaling_match.group(2)}"
-                        if "Scaling exceeds" in line:
-                            scaling = f'<span class="problematic">{scaling} (Problematic)</span>'
-            
-            # Map column names to their values and classes
-            column_data = {
-                'Verification ID': (verification_id, ''),
-                'Certificate Value': (certificate_val, ''),
-                'Sample Value': (sample_val, sample_val_class),
-                'Acceptable Range': (acceptable_range, ''),
-                'Blank Value': (blank_val, ''),
-                'Blank Label': (blank_label, ''),
-                'Blank Correction Status': (blank_correction_status, ''),
-                'Sample Value - Blank': (corrected_sample_val, corrected_sample_val_class),
-                'Soln Conc': (soln_conc, soln_conc_class),
-                'Int': (int_val, ''),
-                'Calibration Range': (calibration_range, ''),
-                'ICP Recovery (%)': (icp_recovery, ''),
-                'ICP Status': (icp_status, icp_status_class),
-                'ICP Detection Limit': (detection_limit, ''),
-                'ICP RSD%': (rsd_percent, ''),
-                'Required Scaling (%)': (scaling, '')
-            }
-            
-            # Generate table row with only visible columns
-            html += "<tr>"
-            for column, (value, css_class) in column_data.items():
+            # Add table headers for visible columns only
+            for column in self.column_visibility:
                 if self.column_visibility[column]:
-                    html += f'<td class="{css_class}">{value}</td>'
+                    html += f"<th>{column}</th>"
             html += "</tr>"
-            
-            # Collect for decision analysis
-            try:
-                if (self.is_numeric(certificate_val) and 
-                    self.is_numeric(sample_val) and 
-                    self.is_numeric_range(acceptable_range)):
-                    range_match = re.match(r'\[(-?[\d.]+) to (-?[\d.]+)\]', acceptable_range)
-                    if range_match:
-                        crm_entry = {
-                            'id': verification_id,
-                            'cert_val': float(certificate_val),
-                            'sample_val': float(sample_val),
-                            'lower': float(range_match.group(1)),
-                            'upper': float(range_match.group(2)),
-                            'blank_val': float(blank_val) if self.is_numeric(blank_val) else 0,
-                            'soln_conc': float(soln_conc) if self.is_numeric(soln_conc) else None,
-                            'wavelength': 'default'
-                        }
-                        crm_data.append(crm_entry)
+
+            crm_data = []
+            for annotation in self.annotations:
+                lines = annotation.split('\n')
+                if not lines:
+                    self.logger.warning("Empty annotation encountered")
+                    continue
+                
+                verification_id_match = re.match(r'Verification ID: (\w+) \(Label: .+\)', lines[0].strip())
+                verification_id = verification_id_match.group(1) if verification_id_match else "Unknown"
+                
+                # Initialize variables for all columns
+                certificate_val = sample_val = acceptable_range = blank_val = blank_label = blank_correction_status = corrected_sample_val = soln_conc = int_val = calibration_range = icp_recovery = icp_status = detection_limit = rsd_percent = scaling = ""
+                sample_val_class = corrected_sample_val_class = soln_conc_class = icp_status_class = ""
+                
+                # Parse annotation lines
+                for line in lines[1:]:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if "Certificate Value:" in line:
+                        certificate_val = line.split(": ")[1].strip()
+                    elif "Sample Value:" in line:
+                        sample_val = line.split(": ")[1].strip()
+                    elif "Acceptable Range:" in line:
+                        acceptable_range = line.split(": ")[1].strip()
+                    elif "Status: In range" in line:
+                        sample_val_class = 'in-range'
+                    elif "Status: Out of range" in line:
+                        sample_val_class = 'out-range'
+                    elif "Blank Value:" in line:
+                        blank_val = line.split(": ")[1].strip()
+                    elif "Blank Label:" in line:
+                        blank_label = line.split(": ")[1].strip()
+                    elif "Blank Correction Status:" in line:
+                        blank_correction_status = line.split(": ")[1].strip()
+                    elif "Sample Value - Blank:" in line:
+                        corrected_sample_val = line.split(": ")[1].strip()
+                        if self.is_numeric(corrected_sample_val) and self.is_numeric_range(acceptable_range):
+                            try:
+                                corrected_val = float(corrected_sample_val)
+                                range_match = re.match(r'\[(-?[\d.]+) to (-?[\d.]+)\]', acceptable_range)
+                                if range_match:
+                                    lower, upper = float(range_match.group(1)), float(range_match.group(2))
+                                    corrected_sample_val_class = 'in-range' if lower <= corrected_val <= upper else 'out-range'
+                            except (ValueError, TypeError) as e:
+                                self.logger.warning(f"Failed to verify corrected sample value: {corrected_sample_val}, error: {str(e)}")
+                                corrected_sample_val_class = 'out-range'
+                    elif "Soln Conc:" in line:
+                        parts = line.split(": ", 1)[1].rsplit(" ", 1)
+                        soln_conc = parts[0].strip()
+                        soln_conc_status = parts[1].strip() if len(parts) > 1 else ""
+                        soln_conc_class = 'in-range' if soln_conc_status == 'in_range' else 'out-range'
+                    elif "Int:" in line:
+                        int_val = line.split(": ")[1].strip()
+                    elif "Calibration Range:" in line:
+                        calibration_range = line.split(": ", 1)[1].rsplit(" ", 1)[0].strip()
+                    elif "ICP Recovery:" in line:
+                        icp_recovery = line.split(": ", 1)[1].rsplit(" ", 1)[0].strip()
+                    elif "ICP Status:" in line:
+                        icp_status = line.split(": ")[1].strip()
+                        icp_status_class = 'in-range' if icp_status == 'In Range' else 'out-range'
+                    elif "ICP Detection Limit:" in line:
+                        detection_limit = line.split(": ")[1].strip()
+                    elif "ICP RSD%:" in line:
+                        rsd_percent = line.split(": ")[1].strip()
+                    elif "Required Scaling:" in line:
+                        scaling_match = re.search(r'Required Scaling: ([\d.]+)% (increase|decrease)', line)
+                        if scaling_match:
+                            scaling = f"{scaling_match.group(1)}% {scaling_match.group(2)}"
+                            if "Scaling exceeds" in line:
+                                scaling = f'<span class="problematic">{scaling} (Problematic)</span>'
+                
+                # Map column names to their values and classes
+                column_data = {
+                    'Verification ID': (verification_id, ''),
+                    'Certificate Value': (certificate_val, ''),
+                    'Sample Value': (sample_val, sample_val_class),
+                    'Acceptable Range': (acceptable_range, ''),
+                    'Blank Value': (blank_val, ''),
+                    'Blank Label': (blank_label, ''),
+                    'Blank Correction Status': (blank_correction_status, ''),
+                    'Sample Value - Blank': (corrected_sample_val, corrected_sample_val_class),
+                    'Soln Conc': (soln_conc, soln_conc_class),
+                    'Int': (int_val, ''),
+                    'Calibration Range': (calibration_range, ''),
+                    'ICP Recovery (%)': (icp_recovery, ''),
+                    'ICP Status': (icp_status, icp_status_class),
+                    'ICP Detection Limit': (detection_limit, ''),
+                    'ICP RSD%': (rsd_percent, ''),
+                    'Required Scaling (%)': (scaling, '')
+                }
+                
+                # Generate table row with only visible columns
+                html += "<tr>"
+                for column, (value, css_class) in column_data.items():
+                    if self.column_visibility[column]:
+                        html += f'<td class="{css_class}">{value}</td>'
+                html += "</tr>"
+                
+                # Collect for decision analysis
+                try:
+                    if (self.is_numeric(certificate_val) and 
+                        self.is_numeric(sample_val) and 
+                        self.is_numeric_range(acceptable_range)):
+                        range_match = re.match(r'\[(-?[\d.]+) to (-?[\d.]+)\]', acceptable_range)
+                        if range_match:
+                            crm_entry = {
+                                'id': verification_id,
+                                'cert_val': float(certificate_val),
+                                'sample_val': float(sample_val),
+                                'lower': float(range_match.group(1)),
+                                'upper': float(range_match.group(2)),
+                                'blank_val': float(blank_val) if self.is_numeric(blank_val) else 0,
+                                'soln_conc': float(soln_conc) if self.is_numeric(soln_conc) else None,
+                                'wavelength': 'default'
+                            }
+                            crm_data.append(crm_entry)
+                        else:
+                            self.logger.warning(f"Invalid range format for {verification_id}: {acceptable_range}")
                     else:
-                        self.logger.warning(f"Invalid range format for {verification_id}: {acceptable_range}")
-                else:
-                    self.logger.warning(f"Non-numeric or missing data for {verification_id}: cert_val={certificate_val}, sample_val={sample_val}, range={acceptable_range}")
-            except Exception as e:
-                self.logger.error(f"Error parsing CRM data for {verification_id}: {str(e)}")
-        
-        html += "</table>"
-        
-        # Add textual decision analysis section
-        html += self.generate_decision_analysis(crm_data)
-        
-        html += """
-        </body>
-        </html>
-        """
-        self.text_edit.setHtml(html)
+                        self.logger.warning(f"Non-numeric or missing data for {verification_id}: cert_val={certificate_val}, sample_val={sample_val}, range={acceptable_range}")
+                except Exception as e:
+                    self.logger.error(f"Error parsing CRM data for {verification_id}: {str(e)}")
+            
+            html += "</table>"
+            
+            # Add textual decision analysis section
+            html += self.generate_decision_analysis(crm_data)
+            
+            html += """
+            </body>
+            </html>
+            """
+            self.text_edit.setHtml(html)
+            self.logger.debug("Generated HTML report successfully")
+        except Exception as e:
+            self.logger.error(f"Error generating HTML report: {str(e)}")
+            self.text_edit.setHtml(f"<html><body><p>Error generating report: {str(e)}</p></body></html>")
+            QMessageBox.warning(self, "Error", f"Failed to generate report: {str(e)}")
 
     def generate_decision_analysis(self, crm_data):
         """Generate textual decision analysis based on conditions, line by line, with final professional decision using three models."""
         if not crm_data:
             self.logger.warning("No sufficient data for decision analysis")
+            self.decision_data['final_decision'] = "No sufficient data for analysis."
             return "<div class='decision-section'><h2>Decision Analysis</h2><p>No sufficient data for analysis.</p></div>"
         
         analysis_html = "<div class='decision-section'><h2>Decision Analysis</h2><ul>"
@@ -314,7 +337,8 @@ class ReportDialog(QDialog):
             res_cond2 = differential_evolution(objective_cond2, adjust_bounds)
             best_blank_adjust = res_cond2.x[0] if res_cond2.success else 0
             best_in_range = -res_cond2.fun if res_cond2.success else in_range_with_blank
-        except:
+        except Exception as e:
+            self.logger.error(f"Error in Condition 2 optimization: {str(e)}")
             best_blank_adjust = 0
             best_in_range = in_range_with_blank
         
@@ -423,8 +447,10 @@ class ReportDialog(QDialog):
                 analysis_html += f'<div class="model-comparison"><strong>Model A (In-Range Maximization):</strong> Blank adjust: {blank_adjust_a:.3f}, Scale: {scale_a:.3f}, In-range: {in_range_after_a}/{total}.</div>'
             else:
                 analysis_html += '<div class="model-comparison"><strong>Model A:</strong> Optimization failed.</div>'
+                self.logger.warning("Model A optimization failed")
         except Exception as e:
             analysis_html += f'<div class="model-comparison"><strong>Model A:</strong> Error: {str(e)}.</div>'
+            self.logger.error(f"Error in Model A optimization: {str(e)}")
         
         # Model 2: Minimize distances with Huber loss
         def objective_b(params):
@@ -483,8 +509,10 @@ class ReportDialog(QDialog):
                 analysis_html += f'<div class="model-comparison"><strong>Model B (Distance Minimization):</strong> Blank adjust: {blank_adjust_b:.3f}, Scale: {scale_b:.3f}, In-range: {in_range_after_b}/{total}, Avg distance: {avg_distance_b:.3f}.</div>'
             else:
                 analysis_html += '<div class="model-comparison"><strong>Model B:</strong> Optimization failed.</div>'
+                self.logger.warning("Model B optimization failed")
         except Exception as e:
             analysis_html += f'<div class="model-comparison"><strong>Model B:</strong> Error: {str(e)}.</div>'
+            self.logger.error(f"Error in Model B optimization: {str(e)}")
 
         # Model 3: Minimize sum of squared errors
         def objective_c(params):
@@ -537,8 +565,10 @@ class ReportDialog(QDialog):
                 analysis_html += f'<div class="model-comparison"><strong>Model C (SSE Minimization to Cert Val):</strong> Blank adjust: {blank_adjust_c:.3f}, Scale: {scale_c:.3f}, In-range: {in_range_after_c}/{total}, Avg distance: {avg_distance_c:.3f}.</div>'
             else:
                 analysis_html += '<div class="model-comparison"><strong>Model C:</strong> Optimization failed.</div>'
+                self.logger.warning("Model C optimization failed")
         except Exception as e:
             analysis_html += f'<div class="model-comparison"><strong>Model C:</strong> Error: {str(e)}.</div>'
+            self.logger.error(f"Error in Model C optimization: {str(e)}")
         
         # Model Comparison and Final Decision
         initial_distances = [0 if d['lower'] <= d['sample_val'] <= d['upper'] else min(abs(d['sample_val'] - d['lower']), abs(d['sample_val'] - d['upper'])) for d in crm_data]
@@ -546,7 +576,7 @@ class ReportDialog(QDialog):
         
         models = []
         if 'in_range_after_a' in locals():
-            models.append(('A', in_range_after_a, blank_adjust_a, scale_a, 'N/A' if scale_a == 1 else 'With Scale'))
+            models.append(('A', in_range_after_a, blank_adjust_a, scale_a, 'N/A' if scale_a == 1 else avg_distance_b if 'avg_distance_b' in locals() else float('inf')))
         if 'in_range_after_b' in locals():
             models.append(('B', in_range_after_b, blank_adjust_b, scale_b, avg_distance_b))
         if 'in_range_after_c' in locals():
@@ -566,20 +596,86 @@ class ReportDialog(QDialog):
             recommended_avg_distance = "N/A"
             model_used = "Fallback"
         
+        # Update decision data
+        self.decision_data.update({
+            'recommended_blank': recommended_blank,
+            'recommended_scale': recommended_scale,
+            'recommended_in_range': recommended_in_range,
+            'recommended_avg_distance': recommended_avg_distance if isinstance(recommended_avg_distance, float) else "N/A",
+            'model_used': model_used
+        })
+        
         analysis_html += f"<p><strong>Model Comparison Summary:</strong> Initial in-range: {initial_in_range}/{total}, Avg distance initial: {avg_distance_initial:.3f}.</p>"
         analysis_html += f"<p><strong>Recommended Correction (Model {model_used}):</strong> Blank adjust: {recommended_blank:.3f}, Scale: {recommended_scale:.3f}, achieving {recommended_in_range}/{total} in range (avg distance: {recommended_avg_distance}).</p>"
         
         # Final decision
-        if recommended_in_range > initial_in_range:
+        if recommended_in_range > initial_in_range or recommended_in_range == total:
             if recommended_in_range == total:
                 recommended_action = "Apply the recommended correction; all data will be in range."
-            elif recommended_in_range >= max(0.75 * total, total - 2):
+            elif recommended_in_range >= max(0.75 * total, total - 1):  # Allow at most one outlier
                 recommended_action = f"Apply the recommended correction; majority ({recommended_in_range}/{total}) in range."
             else:
                 recommended_action = f"Apply the recommended correction for improvement; {recommended_in_range}/{total} in range."
         else:
             recommended_action = "No improvement; do not apply changes. Consider manual review if needed."
         
+        self.decision_data['final_decision'] = recommended_action
         analysis_html += f"<p><strong>Final Decision:</strong> {recommended_action} This ensures the majority of data falls within acceptable ranges with the least disruption, aligning with the goal of optimal data integrity.</p></div>"
         
+        self.logger.debug(f"Decision Analysis: Final Decision = {recommended_action}, Blank = {recommended_blank:.3f}, Scale = {recommended_scale:.3f}, In-range = {recommended_in_range}/{total}")
         return analysis_html
+
+    def get_final_decision(self):
+        """Return the Final Decision for external use."""
+        try:
+            # Ensure decision_data is populated
+            if self.decision_data['final_decision'] == "Calculating...":
+                crm_data = []
+                for annotation in self.annotations:
+                    lines = annotation.split('\n')
+                    if not lines:
+                        continue
+                    verification_id_match = re.match(r'Verification ID: (\w+) \(Label: .+\)', lines[0].strip())
+                    verification_id = verification_id_match.group(1) if verification_id_match else "Unknown"
+                    certificate_val = sample_val = acceptable_range = blank_val = ""
+                    for line in lines[1:]:
+                        line = line.strip()
+                        if "Certificate Value:" in line:
+                            certificate_val = line.split(": ")[1].strip()
+                        elif "Sample Value:" in line:
+                            sample_val = line.split(": ")[1].strip()
+                        elif "Acceptable Range:" in line:
+                            acceptable_range = line.split(": ")[1].strip()
+                        elif "Blank Value:" in line:
+                            blank_val = line.split(": ")[1].strip()
+                    if (self.is_numeric(certificate_val) and 
+                        self.is_numeric(sample_val) and 
+                        self.is_numeric_range(acceptable_range)):
+                        range_match = re.match(r'\[(-?[\d.]+) to (-?[\d.]+)\]', acceptable_range)
+                        if range_match:
+                            crm_entry = {
+                                'id': verification_id,
+                                'cert_val': float(certificate_val),
+                                'sample_val': float(sample_val),
+                                'lower': float(range_match.group(1)),
+                                'upper': float(range_match.group(2)),
+                                'blank_val': float(blank_val) if self.is_numeric(blank_val) else 0,
+                                'soln_conc': None,
+                                'wavelength': 'default'
+                            }
+                            crm_data.append(crm_entry)
+                self.generate_decision_analysis(crm_data)  # Populate decision_data
+            self.logger.debug(f"Returning Final Decision: {self.decision_data['final_decision']}")
+            return self.decision_data['final_decision']
+        except Exception as e:
+            self.logger.error(f"Error retrieving Final Decision: {str(e)}")
+            return "Error determining decision"
+
+    def get_correction_parameters(self):
+        """Return recommended blank and scale for compatibility."""
+        try:
+            self.logger.debug(f"Returning correction parameters: blank={self.decision_data['recommended_blank']:.3f}, scale={self.decision_data['recommended_scale']:.3f}")
+            return self.decision_data['recommended_blank'], self.decision_data['recommended_scale']
+        except Exception as e:
+            self.logger.error(f"Error retrieving correction parameters: {str(e)}")
+            return 0.01, 1.05  # Fallback values

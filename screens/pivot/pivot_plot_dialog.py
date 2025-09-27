@@ -58,7 +58,7 @@ class PivotPlotDialog(QDialog):
         self.max_correction_percent = QLineEdit("32")
         control_frame.addWidget(self.max_correction_percent)
         
-        correct_btn = QPushButton("Correct Sample Value")
+        correct_btn = QPushButton("Correct")
         correct_btn.clicked.connect(self.correct_crm_callback)
         control_frame.addWidget(correct_btn)
         
@@ -82,6 +82,11 @@ class PivotPlotDialog(QDialog):
         reset_zoom_btn.clicked.connect(self.reset_zoom)
         control_frame.addWidget(reset_zoom_btn)
         
+        self.status_label = QLabel("Ready")
+        self.status_label.setStyleSheet("QLabel { color: #333; font-size: 12px; }")
+        control_frame.addWidget(self.status_label)
+        
+        control_frame.addStretch()
         layout.addLayout(control_frame)
         
         self.main_plot = pg.PlotWidget()
@@ -126,14 +131,151 @@ class PivotPlotDialog(QDialog):
                     return
 
     def show_report(self):
-        from .report_dialog import ReportDialog
-        self.logger.debug(f"Opening report with annotations: {self.annotations}")
-        dialog = ReportDialog(self, self.annotations)
-        dialog.exec()
+        try:
+            from .report_dialog import ReportDialog
+            self.logger.debug(f"Opening report with {len(self.annotations)} annotations")
+            dialog = ReportDialog(self, self.annotations)
+            result = dialog.exec()
+            if result == QDialog.DialogCode.Accepted:
+                self.logger.debug("Report dialog accepted")
+                self.status_label.setText("Report closed successfully")
+            else:
+                self.logger.debug("Report dialog closed without applying corrections")
+                self.status_label.setText("Report closed without applying corrections")
+        except Exception as e:
+            self.logger.error(f"Error opening ReportDialog: {str(e)}")
+            self.status_label.setText(f"Error opening report: {str(e)}")
+            QMessageBox.warning(self, "Error", f"Failed to open report: {str(e)}")
 
     def correct_crm_callback(self):
-        self.parent.correct_pivot_crm()
-        self.update_plot()
+        try:
+            if self.parent.pivot_data is None or self.parent.pivot_data.empty:
+                self.logger.error("pivot_data is empty or None")
+                self.status_label.setText("Error: No pivot data available")
+                QMessageBox.warning(self, "Error", "No pivot data available to correct")
+                return
+
+            column_to_correct = self.selected_element
+            if column_to_correct not in self.parent.pivot_data.columns:
+                self.logger.error(f"Column {column_to_correct} not found in pivot_data")
+                self.status_label.setText(f"Error: Column {column_to_correct} not found")
+                QMessageBox.warning(self, "Error", f"Column {column_to_correct} not found in pivot data")
+                return
+
+            # Check Final Decision from ReportDialog
+            final_decision = "Unknown"
+            try:
+                from .report_dialog import ReportDialog
+                dialog = ReportDialog(self, self.annotations)
+                final_decision = dialog.get_final_decision()  # Assumes ReportDialog has get_final_decision
+                self.logger.debug(f"Retrieved Final Decision: {final_decision}")
+            except Exception as e:
+                self.logger.error(f"Error retrieving Final Decision: {str(e)}")
+                final_decision = "Error retrieving decision"
+                self.status_label.setText(f"Error retrieving Final Decision: {str(e)}")
+                QMessageBox.warning(self, "Error", f"Failed to retrieve Final Decision: {str(e)}")
+                return
+
+            # Display Final Decision
+            self.status_label.setText(f"Final Decision: {final_decision}")
+            QMessageBox.information(self, "Final Decision", f"Final Decision: {final_decision}")
+
+            # Skip corrections if Final Decision indicates no changes
+            if final_decision == "No improvement; do not apply changes. Consider manual review if needed.":
+                self.logger.info("No corrections applied due to Final Decision")
+                self.status_label.setText("No corrections applied: Data does not require correction")
+                QMessageBox.information(self, "Information", "Data does not require correction per Final Decision")
+                return
+
+            # Calculate recommended_blank
+            blank_rows = self.parent.pivot_data[
+                self.parent.pivot_data['Solution Label'].str.contains(r'CRM\s*BLANK', case=False, na=False, regex=True)
+            ]
+            recommended_blank = 0.0
+            if not blank_rows.empty:
+                blank_values = [float(val) for val in blank_rows[self.selected_element] if self.is_numeric(val)]
+                recommended_blank = np.mean(blank_values) if blank_values else 0.0
+                self.logger.debug(f"Calculated recommended_blank: {recommended_blank} from {len(blank_values)} blank values")
+
+            # Calculate recommended_scale
+            recommended_scale = 1.0
+            sample_values = []
+            cert_values = []
+            for sol_label in self.parent._inline_crm_rows_display.keys():
+                if sol_label in blank_rows['Solution Label'].values:
+                    continue
+                pivot_row = self.parent.pivot_data[self.parent.pivot_data['Solution Label'] == sol_label]
+                if pivot_row.empty:
+                    continue
+                pivot_val = pivot_row.iloc[0][self.selected_element]
+                if not self.is_numeric(pivot_val):
+                    continue
+                pivot_val_float = float(pivot_val)
+                for row_data, _ in self.parent._inline_crm_rows_display[sol_label]:
+                    if isinstance(row_data, list) and row_data and row_data[0].endswith("CRM"):
+                        val = row_data[self.parent.pivot_data.columns.get_loc(self.selected_element)] if self.selected_element in self.parent.pivot_data.columns else ""
+                        if self.is_numeric(val):
+                            sample_values.append(pivot_val_float)
+                            cert_values.append(float(val))
+            if sample_values and cert_values:
+                sample_mean = np.mean(sample_values)
+                cert_mean = np.mean(cert_values)
+                if sample_mean != 0:
+                    recommended_scale = cert_mean / sample_mean
+                    recommended_scale = max(0.5, min(2.0, recommended_scale))  # Limit scale
+                self.logger.debug(f"Calculated recommended_scale: {recommended_scale} from sample_mean={sample_mean}, cert_mean={cert_mean}")
+
+            # Apply corrections to pivot_data
+            blank_column = 'Blank Value' if 'Blank Value' in self.parent.pivot_data.columns else None
+            self.parent.pivot_data[column_to_correct] = self.parent.pivot_data.apply(
+                lambda row: (
+                    (float(row[column_to_correct]) - 
+                     (float(row[blank_column]) if blank_column and self.is_numeric(row[blank_column]) else 0) - 
+                     recommended_blank) * recommended_scale
+                ) if self.is_numeric(row[column_to_correct]) else row[column_to_correct],
+                axis=1
+            )
+            self.logger.debug(f"Applied correction to pivot_data[{column_to_correct}]: blank={recommended_blank}, scale={recommended_scale}")
+            self.logger.debug(f"Updated pivot_data: {self.parent.pivot_data[[column_to_correct]].head().to_dict()}")
+
+            # Apply corrections to original_df
+            if self.parent.original_df is not None and not self.parent.original_df.empty:
+                mask = self.parent.original_df['Element'] == self.selected_element
+                if 'Soln Conc' in self.parent.original_df.columns:
+                    self.parent.original_df.loc[mask, 'Soln Conc'] = self.parent.original_df[mask].apply(
+                        lambda row: (
+                            (float(row['Soln Conc']) - 
+                             (float(row[blank_column]) if blank_column and blank_column in self.parent.original_df.columns and self.is_numeric(row[blank_column]) else 0) - 
+                             recommended_blank) * recommended_scale
+                        ) if self.is_numeric(row['Soln Conc']) else row['Soln Conc'],
+                        axis=1
+                    )
+                    self.logger.debug(f"Applied correction to original_df[Soln Conc] for {self.selected_element}: blank={recommended_blank}, scale={recommended_scale}")
+                    self.logger.debug(f"Updated original_df: {self.parent.original_df[mask][['Soln Conc']].head().to_dict()}")
+                else:
+                    self.logger.warning(f"Column Soln Conc not found in original_df for {self.selected_element}")
+                    self.status_label.setText("Warning: Could not update original_df")
+            else:
+                self.logger.warning("original_df is empty or None")
+                self.status_label.setText("Warning: No original_df to update")
+
+            # Refresh parent's table view
+            if hasattr(self.parent, 'update_pivot_display'):
+                try:
+                    self.parent.update_pivot_display()
+                    self.logger.debug("Parent table view updated")
+                except Exception as e:
+                    self.logger.error(f"Error updating parent table view: {str(e)}")
+                    self.status_label.setText(f"Error updating parent table: {str(e)}")
+
+            self.update_plot()
+            self.status_label.setText(f"Corrections applied: Blank={self.format_number(recommended_blank)}, Scale={self.format_number(recommended_scale)}")
+            QMessageBox.information(self, "Success", f"Sample values corrected successfully\nFinal Decision: {final_decision}")
+        
+        except Exception as e:
+            self.logger.error(f"Error applying corrections: {str(e)}")
+            self.status_label.setText(f"Error applying corrections: {str(e)}")
+            QMessageBox.warning(self, "Error", f"Failed to apply corrections: {str(e)}")
 
     def is_numeric(self, value):
         try:
@@ -154,6 +296,7 @@ class PivotPlotDialog(QDialog):
         self.selected_element = self.element_selector.currentText()
         if not self.selected_element or self.selected_element not in self.parent.pivot_data.columns:
             self.logger.warning(f"Element '{self.selected_element}' not found in pivot data!")
+            self.status_label.setText(f"Element '{self.selected_element}' not found")
             QMessageBox.warning(self, "Warning", f"Element '{self.selected_element}' not found!")
             return
 
@@ -439,6 +582,7 @@ class PivotPlotDialog(QDialog):
                 self.main_plot.clear()
                 self.legend.clear()
                 self.logger.warning(f"No valid Verification data for {self.selected_element}")
+                self.status_label.setText(f"No valid Verification data for {self.selected_element}")
                 QMessageBox.warning(self, "Warning", f"No valid Verification data for {self.selected_element}")
                 return
 
@@ -525,11 +669,13 @@ class PivotPlotDialog(QDialog):
                     added_legend_names.add('Acceptable Range')
 
             self.main_plot.showGrid(x=True, y=True, alpha=0.3)
+            self.status_label.setText("Plot updated successfully")
 
         except Exception as e:
             self.main_plot.clear()
             self.legend.clear()
             self.logger.error(f"Failed to update plot: {str(e)}")
+            self.status_label.setText(f"Error updating plot: {str(e)}")
             QMessageBox.warning(self, "Error", f"Failed to update plot: {str(e)}")
 
     def open_select_crms_window(self):
