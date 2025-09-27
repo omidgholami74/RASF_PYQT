@@ -1,10 +1,10 @@
 import sys
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTableView,QAbstractItemView,
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTableView, QAbstractItemView,
     QHeaderView, QScrollBar, QComboBox, QLineEdit, QDialog, QFileDialog, QMessageBox, QGroupBox
 )
-from PyQt6.QtCore import Qt, QAbstractTableModel, QVariant, QTimer
-from PyQt6.QtGui import QStandardItemModel, QStandardItem, QFont
+from PyQt6.QtCore import Qt, QAbstractTableModel, QVariant
+from PyQt6.QtGui import QStandardItemModel, QStandardItem, QFont, QColor
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
@@ -19,98 +19,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Global stylesheet for consistent UI
-global_style = """
-    QWidget {
-        background-color: #F5F7FA;
-        font-family: 'Inter', 'Segoe UI', sans-serif;
-        font-size: 13px;
-    }
-    QDialog {
-        background-color: #F5F7FA;
-    }
-    QGroupBox {
-        font-weight: bold;
-        color: #1A3C34;
-        margin-top: 15px;
-        border: 1px solid #D0D7DE;
-        border-radius: 6px;
-        padding: 10px;
-    }
-    QGroupBox::title {
-        subcontrol-origin: margin;
-        subcontrol-position: top left;
-        padding: 0 5px;
-        left: 10px;
-    }
-    QPushButton {
-        background-color: #2E7D32;
-        color: white;
-        border: none;
-        padding: 8px 16px;
-        font-weight: 600;
-        font-size: 13px;
-        border-radius: 6px;
-    }
-    QPushButton:hover {
-        background-color: #1B5E20;
-    }
-    QPushButton:disabled {
-        background-color: #E0E0E0;
-        color: #6B7280;
-    }
-    QComboBox {
-        background-color: #FFFFFF;
-        color: #1A3C34;
-        border: 1px solid #D0D7DE;
-        padding: 6px;
-        font-size: 13px;
-        border-radius: 6px;
-    }
-    QComboBox:focus {
-        border: 1px solid #2E7D32;
-        box-shadow: 0 0 5px rgba(46, 125, 50, 0.3);
-    }
-    QComboBox QAbstractItemView {
-        background-color: #FFFFFF;
-        color: #1A3C34;
-        selection-background-color: #DBEAFE;
-        selection-color: #1A3C34;
-    }
-    QLineEdit {
-        background-color: #FFFFFF;
-        color: #1A3C34;
-        border: 1px solid #D0D7DE;
-        padding: 6px;
-        font-size: 13px;
-        border-radius: 6px;
-    }
-    QLineEdit:focus {
-        border: 1px solid #2E7D32;
-        box-shadow: 0 0 5px rgba(46, 125, 50, 0.3);
-    }
-    QTableView {
-        background-color: #FFFFFF;
-        border: 1px solid #D0D7DE;
-        gridline-color: #E5E7EB;
-        font-size: 12px;
-        selection-background-color: #DBEAFE;
-        selection-color: #1A3C34;
-    }
-    QHeaderView::section {
-        background-color: #F9FAFB;
-        font-weight: 600;
-        color: #1A3C34;
-        border: 1px solid #D0D7DE;
-        padding: 6px;
-    }
-    QTableView::item {
-        border: 1px solid #D0D7DE;
-    }
-    QTableView::item:selected {
-        background-color: #DBEAFE;
-        color: #1A3C34;
-    }
-"""
+global_style = """ """
 
 class PandasModel(QAbstractTableModel):
     """Custom model to display pandas DataFrame in QTableView"""
@@ -285,6 +194,7 @@ class FilterDialog(QDialog):
     def update_checkboxes(self):
         start_time = time.time()
         field = self.filter_combo.currentText()
+        self.parent().filter_field = field  # Update filter_field in parent
         model = QStandardItemModel()
         model.setHorizontalHeaderLabels(["Value", "Select"])
 
@@ -292,7 +202,7 @@ class FilterDialog(QDialog):
             self.solution_label_order if field == "Solution Label"
             else self.element_order if self.element_order else []
         )
-        if field not in self.filter_values:
+        if field not in self.filter_values or not self.filter_values[field]:
             self.filter_values[field] = {val: True for val in unique_values}
 
         for value in unique_values:
@@ -310,14 +220,20 @@ class FilterDialog(QDialog):
         self.filter_table.setColumnWidth(0, 200)
         self.filter_table.setColumnWidth(1, 100)
         model.itemChanged.connect(lambda item: self.toggle_filter(item, field))
+        # Reset cache and apply filter immediately when filter field changes
+        self.parent().reset_filter_cache()
+        self.update_callback()
         logger.debug(f"Updated checkboxes for {field} in {time.time() - start_time:.3f} seconds")
 
     def toggle_filter(self, item, field):
-        if item.column() == 1:
+        if item.column() == 1:  # Only handle checkbox column
+            start_time = time.time()
             value = self.filter_table.model().item(item.row(), 0).text()
             self.filter_values[field][value] = (item.checkState() == Qt.CheckState.Checked)
-            QTimer.singleShot(0, self.update_callback)
-            logger.debug(f"Toggled filter for {field}: {value} = {self.filter_values[field][value]}")
+            # Invalidate cache to ensure filter is applied
+            self.parent().reset_filter_cache()
+            self.update_callback()  # Directly call update_callback to apply filter immediately
+            logger.debug(f"Toggled filter for {field}: {value} = {self.filter_values[field][value]} in {time.time() - start_time:.3f} seconds")
 
     def set_all_checkboxes(self, value):
         start_time = time.time()
@@ -325,8 +241,10 @@ class FilterDialog(QDialog):
         if field in self.filter_values:
             for val in self.filter_values[field]:
                 self.filter_values[field][val] = value
-            self.update_checkboxes()
-            QTimer.singleShot(0, self.update_callback)
+            # Invalidate cache to ensure filter is applied
+            self.parent().reset_filter_cache()
+            self.update_checkboxes()  # Refresh the table to reflect changes
+            self.update_callback()  # Apply filter immediately
             logger.debug(f"Set all checkboxes for {field} to {value} in {time.time() - start_time:.3f} seconds")
 
 class ResultsFrame(QWidget):
@@ -344,12 +262,11 @@ class ResultsFrame(QWidget):
         self.solution_label_order = None
         self.element_order = None
         self.decimal_places = "1"
-        self.data_hash = None  # Track data changes
+        self.data_hash = None
         self.setup_ui()
         self.app.notify_data_changed = self.show_processed_data
 
     def setup_ui(self):
-        """Setup Results UI with pivot table, scrollbars, and decimal places selection"""
         start_time = time.time()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
@@ -386,7 +303,7 @@ class ResultsFrame(QWidget):
         self.decimal_combo.setCurrentText(self.decimal_places)
         self.decimal_combo.setFixedWidth(60)
         self.decimal_combo.setToolTip("Set the number of decimal places for numeric values")
-        self.decimal_combo.currentTextChanged.connect(lambda: QTimer.singleShot(0, self.show_processed_data))
+        self.decimal_combo.currentTextChanged.connect(lambda: self.show_processed_data())
         controls_layout.addWidget(self.decimal_combo)
         controls_layout.addStretch()
 
@@ -411,15 +328,19 @@ class ResultsFrame(QWidget):
         logger.debug(f"ResultsFrame UI setup took {time.time() - start_time:.3f} seconds")
 
     def format_value(self, x):
-        """Format a value to the specified number of decimal places"""
         try:
             decimal_places = int(self.decimal_combo.currentText())
             return f"{float(x):.{decimal_places}f}"
         except (ValueError, TypeError):
             return str(x)
 
+    def reset_filter_cache(self):
+        """Reset cache related to filtering to ensure immediate updates"""
+        self.last_filtered_data = None
+        self._last_cache_key = None
+        logger.debug("Filter cache reset")
+
     def get_filtered_data(self):
-        """Get filtered pivot table data with optimized caching"""
         start_time = time.time()
         df = self.app.get_data()
         if df is None or df.empty:
@@ -432,7 +353,6 @@ class ResultsFrame(QWidget):
             QMessageBox.warning(self, "Error", f"DataFrame missing required columns: {required_columns}")
             return None
 
-        # Calculate data hash to detect changes
         new_hash = str(pd.util.hash_pandas_object(df[required_columns]).sum())
         if new_hash == self.data_hash and self.last_filtered_data is not None:
             logger.debug(f"Using cached data (same hash), took {time.time() - start_time:.3f} seconds")
@@ -526,7 +446,6 @@ class ResultsFrame(QWidget):
         return pivot_data
 
     def show_processed_data(self):
-        """Show the final processed pivot table"""
         start_time = time.time()
         df = self.get_filtered_data()
         model = QStandardItemModel()
@@ -566,7 +485,6 @@ class ResultsFrame(QWidget):
         logger.debug(f"Show processed pivot data took {time.time() - start_time:.3f} seconds")
 
     def open_search_window(self):
-        """Open a dialog for search input with improved UI"""
         start_time = time.time()
         if self.app.get_data() is None:
             QMessageBox.warning(self, "Warning", "No data to search!")
@@ -588,7 +506,7 @@ class ResultsFrame(QWidget):
         search_entry.setPlaceholderText("Enter search term...")
         search_entry.setToolTip("Enter text to search in the pivot table")
         search_entry.textChanged.connect(lambda text: setattr(self, 'search_var', text))
-        search_entry.textChanged.connect(lambda: QTimer.singleShot(0, self.show_processed_data))
+        search_entry.textChanged.connect(self.show_processed_data)
         layout.addWidget(search_entry)
 
         button_layout = QHBoxLayout()
@@ -610,7 +528,6 @@ class ResultsFrame(QWidget):
         logger.debug(f"Open search window took {time.time() - start_time:.3f} seconds")
 
     def open_filter_window(self):
-        """Open a dialog to select filter values with improved UI"""
         start_time = time.time()
         df = self.app.get_data()
         if df is None:
@@ -628,7 +545,6 @@ class ResultsFrame(QWidget):
         logger.debug(f"Open filter window took {time.time() - start_time:.3f} seconds")
 
     def save_processed_excel(self):
-        """Save processed pivot table to Excel with styles"""
         start_time = time.time()
         df = self.get_filtered_data()
         if df is None:
@@ -707,7 +623,6 @@ class ResultsFrame(QWidget):
                 logger.error(f"Failed to save: {str(e)}")
 
     def reset_cache(self):
-        """Reset cached data, orders, filters, and search"""
         self.last_filtered_data = None
         self._last_cache_key = None
         self.solution_label_order = None
