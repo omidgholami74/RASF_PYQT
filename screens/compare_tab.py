@@ -515,9 +515,9 @@ class CompareTab(QWidget):
 
         except Exception as e:
             logger.error(f"Error processing sheets: {str(e)}")
-            self.status_label.setText(f"Error: {str(e)}")
-            self.status_label.setStyleSheet("color: #d32f2f; font: 13px 'Segoe UI'; background-color: #FFEBEE; padding: 10px; border-radius: 5px; border: 1px solid #EF9A9A;")
-            QMessageBox.critical(self, "Error", f"Failed to process sheets:\n{str(e)}")
+            # self.status_label.setText(f"Error: {str(e)}")
+            # self.status_label.setStyleSheet("color: #d32f2f; font: 13px 'Segoe UI'; background-color: #FFEBEE; padding: 10px; border-radius: 5px; border: 1px solid #EF9A9A;")
+            # QMessageBox.critical(self, "Error", f"Failed to process sheets:\n{str(e)}")
 
     def create_group_inputs(self):
         """Create group boxes for each magnitude order with weight textboxes."""
