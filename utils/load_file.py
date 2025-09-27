@@ -227,10 +227,10 @@ def load_excel(app):
             # Trigger Process tab updates
             if "Process" in app.main_content.tab_subtab_map:
                 process_subtabs = app.main_content.tab_subtab_map["Process"]["widgets"]
-                if "Result" in process_subtabs:
+                if "Weight Check" in process_subtabs:
                     logger.debug("Updating Process tab")
                     if hasattr(app.results, 'reset_cache'):
-                        app.main_content.switch_subtab("Result", "Process")  # Show ResultsFrame
+                        app.main_content.switch_subtab("Weight Check", "Process")  # Show ResultsFrame
                         app.results.reset_cache()
                     if hasattr(app.results, 'show_processed_data'):
                         app.results.show_processed_data()
