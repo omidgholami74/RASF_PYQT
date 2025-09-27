@@ -281,16 +281,16 @@ class CompareTab(QWidget):
 
         self.sample_combo = QComboBox()
         self.sample_combo.setFixedWidth(250)
-        self.sample_combo.addItem("Select Sample Sheet")
+        self.sample_combo.addItem("Select Control Sheet")
         self.sample_combo.currentTextChanged.connect(self.update_sheets)
-        sheet_layout.addWidget(QLabel("Sample Sheet:"))
+        sheet_layout.addWidget(QLabel("Control Sheet:"))
         sheet_layout.addWidget(self.sample_combo)
 
         self.control_combo = QComboBox()
         self.control_combo.setFixedWidth(250)
-        self.control_combo.addItem("Select Control Sheet")
+        self.control_combo.addItem("Select Sample Sheet")
         self.control_combo.currentTextChanged.connect(self.update_sheets)
-        sheet_layout.addWidget(QLabel("Control Sheet:"))
+        sheet_layout.addWidget(QLabel("Sample Sheet:"))
         sheet_layout.addWidget(self.control_combo)
         sheet_layout.addStretch()
 
@@ -510,7 +510,7 @@ class CompareTab(QWidget):
             self.headers = ["SAMPLE ID"] + self.non_numeric_columns + self.sorted_columns
 
             self.create_group_inputs()
-            self.status_label.setText(f"Loaded: {self.sample_sheet} (Sample), {self.control_sheet} (Control), {len(self.sorted_columns)} numeric columns, {len(self.non_numeric_columns)} non-numeric")
+            self.status_label.setText(f"Loaded: {self.sample_sheet} (Control), {self.control_sheet} (Sample), {len(self.sorted_columns)} numeric columns, {len(self.non_numeric_columns)} non-numeric")
             self.status_label.setStyleSheet("color: #2e7d32; font: 13px 'Segoe UI'; background-color: #E8F5E9; padding: 10px; border-radius: 5px; border: 1px solid #A5D6A7;")
 
         except Exception as e:
@@ -687,7 +687,7 @@ class CompareTab(QWidget):
 
         for match in match_data:
             sample_row_items = [
-                QStandardItem("Sample"),
+                QStandardItem("Control"),
                 QStandardItem(str(match["Sample ID"])),
                 QStandardItem(f"{match['Similarity (%)']:.2f}"),
             ]
@@ -706,7 +706,7 @@ class CompareTab(QWidget):
             row_idx += 1
 
             control_row_items = [
-                QStandardItem("Control"),
+                QStandardItem("Sample"),
                 QStandardItem(str(match["Control ID"])),
                 QStandardItem(""),
             ]
@@ -867,7 +867,7 @@ class CompareTab(QWidget):
                 total_errors = []
 
                 for match in match_data:
-                    worksheet.write(row, 0, "Sample", sample_format)
+                    worksheet.write(row, 0, "Control", sample_format)
                     worksheet.write(row, 1, match["Sample ID"], sample_format)
                     col_idx = 2
                     for col in self.non_numeric_columns + numeric_columns:
@@ -880,7 +880,7 @@ class CompareTab(QWidget):
                         col_idx += 1
                     row += 1
 
-                    worksheet.write(row, 0, "Control", control_format)
+                    worksheet.write(row, 0, "Sample", control_format)
                     worksheet.write(row, 1, match["Control ID"], control_format)
                     col_idx = 2
                     for col in self.non_numeric_columns + numeric_columns:
