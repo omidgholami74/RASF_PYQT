@@ -627,7 +627,7 @@ class CompareTab(QWidget):
         QMessageBox.critical(self, "Error", f"Comparison failed:\n{error_msg}")
 
     def show_results_dialog(self, match_data, all_columns, numeric_columns):
-        """Show comparison results in a new dialog with scrollable table."""
+        """Show comparison results in a new dialog with scrollable table, without Difference columns."""
         dialog = QDialog(self)
         dialog.setWindowTitle("Comparison Results")
         dialog.setStyleSheet("""
@@ -679,7 +679,8 @@ class CompareTab(QWidget):
         button_layout.addStretch()
         layout.addWidget(button_frame)
 
-        columns = ["Type", "ID", "Similarity (%)"] + [f"{col}" for col in all_columns] + [f"{col}_Difference" for col in numeric_columns]
+        # فقط ستون‌های اصلی و بدون ستون‌های Difference
+        columns = ["Type", "ID", "Similarity (%)"] + [f"{col}" for col in all_columns]
         model = QStandardItemModel()
         model.setHorizontalHeaderLabels(columns)
 
@@ -698,10 +699,6 @@ class CompareTab(QWidget):
                 val = match.get(f"Sample_{col}", "")
                 val_str = f"{val:.2f}" if isinstance(val, (int, float)) and not pd.isna(val) else str(val) if not pd.isna(val) else ""
                 sample_row_items.append(QStandardItem(val_str))
-            for col in numeric_columns:
-                d = match.get(f"{col}_Difference")
-                d_str = f"{d:.2f}" if d is not None else ""
-                sample_row_items.append(QStandardItem(d_str))
             for item in sample_row_items:
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 item.setBackground(QColor("#E8F5E9"))
@@ -717,42 +714,13 @@ class CompareTab(QWidget):
                 val = match.get(f"Control_{col}", "")
                 val_str = f"{val:.2f}" if isinstance(val, (int, float)) and not pd.isna(val) else str(val) if not pd.isna(val) else ""
                 control_row_items.append(QStandardItem(val_str))
-            for col in numeric_columns:
-                control_row_items.append(QStandardItem(""))
             for item in control_row_items:
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 item.setBackground(QColor("#E3F2FD"))
             model.appendRow(control_row_items)
             row_idx += 1
 
-            d_row_items = [
-                QStandardItem("d"),
-                QStandardItem(""),
-                QStandardItem(""),
-            ]
-            for col in all_columns:
-                if col in self.non_numeric_columns:
-                    d_row_items.append(QStandardItem(""))
-                else:
-                    d = match.get(f"{col}_Difference")
-                    d_str = f"{d:.2f}" if d is not None else ""
-                    item = QStandardItem(d_str)
-                    item.setBackground(QColor("#FF0000") if d is not None and d > 5 else QColor("#FFEBEE"))
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    d_row_items.append(item)
-            for col in numeric_columns:
-                d = match.get(f"{col}_Difference")
-                d_str = f"{d:.2f}" if d is not None else ""
-                item = QStandardItem(d_str)
-                item.setBackground(QColor("#FF0000") if d is not None and d > 5 else QColor("#FFEBEE"))
-                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                d_row_items.append(item)
-            for item in d_row_items[:len(all_columns) + 3]:
-                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                item.setBackground(QColor("#FFEBEE"))
-            model.appendRow(d_row_items)
-            row_idx += 1
-
+            # حذف ردیف d چون دیگر نیازی به نمایش Difference نیست
             blank_row_items = [QStandardItem("") for _ in range(len(columns))]
             for item in blank_row_items:
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -760,12 +728,14 @@ class CompareTab(QWidget):
             model.appendRow(blank_row_items)
             row_idx += 1
 
+            # محاسبه Difference برای Sum d و Overall Average Error
             for col in numeric_columns:
                 d = match.get(f"{col}_Difference")
                 if d is not None:
                     column_sums[col] += d
                     total_errors.append(d)
 
+        # اضافه کردن ردیف Sum d
         sum_row_items = [
             QStandardItem("Sum d"),
             QStandardItem(""),
@@ -773,9 +743,6 @@ class CompareTab(QWidget):
         ]
         for col in all_columns:
             sum_row_items.append(QStandardItem(""))
-        for col in numeric_columns:
-            sum_d = column_sums[col]
-            sum_row_items.append(QStandardItem(f"{sum_d:.2f}"))
         for item in sum_row_items:
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             item.setBackground(QColor("#F5F6F5"))
@@ -801,7 +768,6 @@ class CompareTab(QWidget):
 
         layout.addWidget(table)
         dialog.exec()
-
     def correct_values(self, dialog, match_data, all_columns, numeric_columns):
         """Correct Sample values where error > 5% and update table."""
         logger.debug("Correcting values with error > 5%")
