@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 import logging
 from datetime import datetime
+from scipy.optimize import differential_evolution
 
 class PivotPlotDialog(QDialog):
     """Dialog for plotting Verification data with PyQtGraph."""
@@ -61,6 +62,10 @@ class PivotPlotDialog(QDialog):
         correct_btn = QPushButton("Correct")
         correct_btn.clicked.connect(self.correct_crm_callback)
         control_frame.addWidget(correct_btn)
+        
+        correct_all_btn = QPushButton("Correct All Elements")
+        correct_all_btn.clicked.connect(self.correct_all_elements)
+        control_frame.addWidget(correct_all_btn)
         
         select_crms_btn = QPushButton("Select Verifications")
         select_crms_btn.clicked.connect(self.open_select_crms_window)
@@ -146,6 +151,177 @@ class PivotPlotDialog(QDialog):
             self.logger.error(f"Error opening ReportDialog: {str(e)}")
             self.status_label.setText(f"Error opening report: {str(e)}")
             QMessageBox.warning(self, "Error", f"Failed to open report: {str(e)}")
+
+    def is_numeric(self, value):
+        try:
+            float(value)
+            return True
+        except (ValueError, TypeError):
+            return False
+
+    def format_number(self, value):
+        if not self.is_numeric(value):
+            return str(value)
+        num = float(value)
+        if num == 0:
+            return "0"
+        return f"{num:.4f}".rstrip('0').rstrip('.')
+
+    def correct_pivot_crm(self, selected_element):
+        self.logger.debug(f"Correcting pivot CRM for element: {selected_element}")
+        if self.parent.pivot_data is None or self.parent.pivot_data.empty:
+            self.logger.warning("No pivot data available for correction")
+            return False, "No pivot data available!"
+
+        if not selected_element or selected_element not in self.parent.pivot_data.columns:
+            available_elements = [col for col in self.parent.pivot_data.columns if col != 'Solution Label']
+            self.logger.warning(f"Invalid element selected: {selected_element}. Available: {available_elements}")
+            return False, f"Please select a valid element! Available: {', '.join(available_elements)}"
+
+        try:
+            max_corr = float(self.max_correction_percent.text()) / 100
+        except ValueError:
+            self.logger.warning("Invalid max correction percent")
+            return False, "Invalid max correction percent!"
+
+        try:
+            self.parent.pivot_data[selected_element] = pd.to_numeric(self.parent.pivot_data[selected_element], errors='coerce')
+
+            crm_data = []
+            for sol_label, crm_rows in self.parent._inline_crm_rows_display.items():
+                if sol_label not in self.parent.included_crms or not self.parent.included_crms[sol_label].isChecked():
+                    continue
+                pivot_row = self.parent.pivot_data[self.parent.pivot_data['Solution Label'] == sol_label]
+                if pivot_row.empty:
+                    continue
+                pivot_val = pivot_row.iloc[0][selected_element]
+                for row_data, _ in crm_rows:
+                    if isinstance(row_data, list) and row_data and row_data[0].endswith("CRM"):
+                        val_str = row_data[self.parent.pivot_data.columns.get_loc(selected_element)] if selected_element in self.parent.pivot_data.columns else ""
+                        if val_str and val_str.strip() and pd.notna(pivot_val):
+                            try:
+                                cert_val = float(val_str)
+                                range_val = self.parent.calculate_dynamic_range(cert_val)
+                                lower, upper = cert_val - range_val, cert_val + range_val
+                                crm_data.append({
+                                    'pivot_val': float(pivot_val),
+                                    'cert_val': cert_val,
+                                    'lower': lower,
+                                    'upper': upper,
+                                    'wavelength': 'default'
+                                })
+                            except ValueError:
+                                self.logger.warning(f"Invalid CRM value for {sol_label}: {val_str}")
+                                continue
+
+            if not crm_data:
+                self.logger.warning(f"No valid CRM data for {selected_element}")
+                return False, f"No valid CRM data for correction of {selected_element}!"
+
+            def get_magnitude(val):
+                if val == 0:
+                    return 0
+                return np.floor(np.log10(abs(val)))
+            
+            magnitudes = {get_magnitude(d['cert_val']) for d in crm_data}
+            if len(magnitudes) > 1:
+                self.logger.info(f"Multiple magnitudes detected for {selected_element}; optimizing globally")
+
+            def objective(params, crm_data, max_corr):
+                blank_adjust, scale = params
+                in_range_count = 0
+                for d in crm_data:
+                    adjusted_val = (d['pivot_val'] - blank_adjust) * scale
+                    if d['lower'] <= adjusted_val <= d['upper']:
+                        in_range_count += 1
+                reg = 10 * (abs(blank_adjust) + abs(scale - 1))
+                return -in_range_count + reg / len(crm_data)
+
+            avg_cert = np.mean([d['cert_val'] for d in crm_data])
+            blank_bounds = (-avg_cert * 0.15, avg_cert * 0.15)
+            scale_bounds = (1 - max_corr, 1 + max_corr)
+            bounds = [blank_bounds, scale_bounds]
+
+            res = differential_evolution(objective, bounds, args=(crm_data, max_corr))
+
+            if not res.success:
+                self.logger.warning(f"Optimization failed for {selected_element}")
+                return False, f"Optimization failed for {selected_element}!"
+
+            blank_adjust, scale = res.x
+    
+            in_range_after = 0
+            for d in crm_data:
+                adjusted_val = (d['pivot_val'] - blank_adjust) * scale
+                if d['lower'] <= adjusted_val <= d['upper']:
+                    in_range_after += 1
+
+            total_crm = len(crm_data)
+            threshold_in_range = max(0.75 * total_crm, total_crm - 2)
+            if in_range_after >= threshold_in_range and abs(scale - 1) > 0.01:
+                def objective_blank(p, crm_data, max_corr):
+                    return objective([p[0], 1], crm_data, max_corr)
+                res_blank = differential_evolution(objective_blank, [blank_bounds], args=(crm_data, max_corr))
+                if res_blank.success:
+                    blank_adjust = res_blank.x[0]
+                    scale = 1
+                    in_range_after = 0
+                    for d in crm_data:
+                        adjusted_val = (d['pivot_val'] - blank_adjust) * scale
+                        if d['lower'] <= adjusted_val <= d['upper']:
+                            in_range_after += 1
+
+            initial_in_range = sum(d['lower'] <= d['pivot_val'] <= d['upper'] for d in crm_data)
+            if in_range_after > initial_in_range:
+                self.parent.pivot_data[selected_element] = (self.parent.pivot_data[selected_element] - blank_adjust) * scale
+                self.logger.debug(f"Applied correction for {selected_element}: blank_adjust={blank_adjust}, scale={scale}")
+                return True, f"Correction applied for {selected_element}: blank_adjust={blank_adjust:.3f}, scale={scale:.3f}. In-range: {int(in_range_after)}/{total_crm}"
+            else:
+                self.logger.info(f"No improvement for {selected_element}; skipping correction")
+                return False, f"Data already optimal or no improvement possible for {selected_element}."
+
+        except Exception as e:
+            self.logger.error(f"Failed to correct Pivot CRM for {selected_element}: {str(e)}")
+            return False, f"Failed to correct Pivot CRM for {selected_element}: {str(e)}"
+
+    def correct_all_elements(self):
+        self.logger.debug("Attempting to correct all elements")
+        if self.parent.pivot_data is None or self.parent.pivot_data.empty:
+            self.logger.warning("No pivot data available for correction")
+            self.status_label.setText("Error: No pivot data available")
+            QMessageBox.warning(self, "Warning", "No pivot data available!")
+            return
+
+        elements = [col for col in self.parent.pivot_data.columns if col != 'Solution Label']
+        if not elements:
+            self.logger.warning("No elements available for correction")
+            self.status_label.setText("Error: No elements available")
+            QMessageBox.warning(self, "Warning", "No elements available for correction!")
+            return
+
+        results = []
+        for element in elements:
+            success, message = self.correct_pivot_crm(element)
+            results.append((element, success, message))
+
+        # Display summary of results
+        success_count = sum(1 for _, success, _ in results if success)
+        summary = f"Correction applied to {success_count}/{len(elements)} elements:\n\n"
+        for element, success, message in results:
+            summary += f"{element}: {'Success' if success else 'Failed'} - {message}\n"
+
+        # Update parent table and current plot
+        if hasattr(self.parent, 'update_pivot_display'):
+            try:
+                self.parent.update_pivot_display()
+                self.logger.debug("Parent table view updated")
+            except Exception as e:
+                self.logger.error(f"Error updating parent table view: {str(e)}")
+                self.status_label.setText(f"Error updating parent table: {str(e)}")
+        self.update_plot()
+
+        self.status_label.setText(f"Correction completed for {success_count}/{len(elements)} elements")
+        QMessageBox.information(self, "Correction Summary", summary)
 
     def correct_crm_callback(self):
         try:
@@ -276,21 +452,6 @@ class PivotPlotDialog(QDialog):
             self.logger.error(f"Error applying corrections: {str(e)}")
             self.status_label.setText(f"Error applying corrections: {str(e)}")
             QMessageBox.warning(self, "Error", f"Failed to apply corrections: {str(e)}")
-
-    def is_numeric(self, value):
-        try:
-            float(value)
-            return True
-        except (ValueError, TypeError):
-            return False
-
-    def format_number(self, value):
-        if not self.is_numeric(value):
-            return str(value)
-        num = float(value)
-        if num == 0:
-            return "0"
-        return f"{num:.4f}".rstrip('0').rstrip('.')
 
     def update_plot(self):
         self.selected_element = self.element_selector.currentText()
@@ -741,4 +902,3 @@ class PivotPlotDialog(QDialog):
             check_item.setCheckState(Qt.CheckState.Checked if self.parent.included_crms[label].isChecked() else Qt.CheckState.Unchecked)
             model.appendRow([value_item, check_item])
         self.update_plot()
-        

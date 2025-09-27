@@ -11,8 +11,6 @@ from .oxide_factors import oxide_factors
 import pandas as pd
 import logging
 import numpy as np
-from scipy.optimize import differential_evolution
-from scipy.special import huber
 from collections import defaultdict
 
 class FilterDialog(QDialog):
@@ -288,13 +286,13 @@ class PivotTab(QWidget):
         try:
             value = float(value)
             if value < 10:
-                return 2
+                return 2  # ±2 for values < 10
             elif 10 <= value < 100:
-                return value * 0.2
+                return value * 0.2  # 20% for 10 <= value < 100
             else:
                 if self.current_plot_dialog and hasattr(self.current_plot_dialog, 'range_percent'):
-                    return value * (self.current_plot_dialog.range_percent / 100)
-                return value * 0.05
+                    return value * (self.current_plot_dialog.range_percent / 100)  # User-selected % for >=100
+                return value * 0.05  # Default 5% if no dialog
         except (ValueError, TypeError):
             return 0
 
@@ -423,136 +421,3 @@ class PivotTab(QWidget):
         annotations = []
         self.current_plot_dialog = PivotPlotDialog(self, annotations)
         self.current_plot_dialog.show()
-
-    def correct_pivot_crm(self):
-        self.logger.debug("Attempting to correct pivot CRM")
-        if self.pivot_data is None or self.pivot_data.empty:
-            self.logger.warning("No pivot data available for correction")
-            QMessageBox.warning(self, "Warning", "No pivot data available!")
-            return
-
-        if not self.current_plot_dialog or not self.current_plot_dialog.isVisible():
-            self.logger.warning("Plot dialog not open or not visible")
-            QMessageBox.warning(self, "Warning", "Please open the plot window first!")
-            return
-
-        selected_element = self.current_plot_dialog.element_selector.currentText()
-        if not selected_element or selected_element not in self.pivot_data.columns:
-            available_elements = [col for col in self.pivot_data.columns if col != 'Solution Label']
-            self.logger.warning(f"Invalid element selected: {selected_element}. Available: {available_elements}")
-            QMessageBox.warning(self, "Warning", f"Please select a valid element! Available: {', '.join(available_elements)}")
-            return
-
-        try:
-            max_corr = float(self.max_correction_percent.text()) / 100
-        except ValueError:
-            self.logger.warning("Invalid max correction percent")
-            QMessageBox.warning(self, "Warning", "Invalid max correction percent!")
-            return
-
-        try:
-            self.logger.debug(f"Correcting pivot CRM for element: {selected_element}")
-            self.pivot_data[selected_element] = pd.to_numeric(self.pivot_data[selected_element], errors='coerce')
-
-            crm_data = []
-            for sol_label, crm_rows in self._inline_crm_rows_display.items():
-                if sol_label not in self.included_crms or not self.included_crms[sol_label].isChecked():
-                    continue
-                pivot_row = self.pivot_data[self.pivot_data['Solution Label'] == sol_label]
-                if pivot_row.empty:
-                    continue
-                pivot_val = pivot_row.iloc[0][selected_element]
-                for row_data, _ in crm_rows:
-                    if isinstance(row_data, list) and row_data and row_data[0].endswith("CRM"):
-                        val_str = row_data[self.pivot_data.columns.get_loc(selected_element)] if selected_element in self.pivot_data.columns else ""
-                        if val_str and val_str.strip() and pd.notna(pivot_val):
-                            try:
-                                cert_val = float(val_str)
-                                range_val = self.calculate_dynamic_range(cert_val)
-                                lower, upper = cert_val - range_val, cert_val + range_val
-                                crm_data.append({
-                                    'pivot_val': float(pivot_val),
-                                    'cert_val': cert_val,
-                                    'lower': lower,
-                                    'upper': upper,
-                                    'wavelength': 'default'
-                                })
-                            except ValueError:
-                                self.logger.warning(f"Invalid CRM value for {sol_label}: {val_str}")
-                                continue
-
-            if not crm_data:
-                self.logger.warning("No valid CRM data for optimization")
-                QMessageBox.warning(self, "Warning", "No valid CRM data for correction!")
-                return
-
-            def get_magnitude(val):
-                if val == 0:
-                    return 0
-                return np.floor(np.log10(abs(val)))
-            
-            magnitudes = {get_magnitude(d['cert_val']) for d in crm_data}
-            if len(magnitudes) > 1:
-                self.logger.info("Multiple magnitudes detected; optimizing globally")
-
-            def objective(params, crm_data, max_corr):
-                blank_adjust, scale = params
-                in_range_count = 0
-                for d in crm_data:
-                    adjusted_val = (d['pivot_val'] - blank_adjust) * scale
-                    if d['lower'] <= adjusted_val <= d['upper']:
-                        in_range_count += 1
-                reg = 10 * (abs(blank_adjust) + abs(scale - 1))
-                return -in_range_count + reg / len(crm_data)
-
-            avg_cert = np.mean([d['cert_val'] for d in crm_data])
-            blank_bounds = (-avg_cert * 0.15, avg_cert * 0.15)
-            scale_bounds = (1 - max_corr, 1 + max_corr)
-            bounds = [blank_bounds, scale_bounds]
-
-            res = differential_evolution(objective, bounds, args=(crm_data, max_corr))
-
-            if not res.success:
-                self.logger.warning("Optimization failed")
-                QMessageBox.warning(self, "Warning", "Optimization failed!")
-                return
-
-            blank_adjust, scale = res.x
-    
-            in_range_after = 0
-            for d in crm_data:
-                adjusted_val = (d['pivot_val'] - blank_adjust) * scale
-                if d['lower'] <= adjusted_val <= d['upper']:
-                    in_range_after += 1
-
-            total_crm = len(crm_data)
-            threshold_in_range = max(0.75 * total_crm, total_crm - 2)
-            if in_range_after >= threshold_in_range and abs(scale - 1) > 0.01:
-                def objective_blank(p, crm_data, max_corr):
-                    return objective([p[0], 1], crm_data, max_corr)
-                res_blank = differential_evolution(objective_blank, [blank_bounds], args=(crm_data, max_corr))
-                if res_blank.success:
-                    blank_adjust = res_blank.x[0]
-                    scale = 1
-                    in_range_after = 0
-                    for d in crm_data:
-                        adjusted_val = (d['pivot_val'] - blank_adjust) * scale
-                        if d['lower'] <= adjusted_val <= d['upper']:
-                            in_range_after += 1
-
-            initial_in_range = sum(d['lower'] <= d['pivot_val'] <= d['upper'] for d in crm_data)
-            if in_range_after > initial_in_range:
-                self.pivot_data[selected_element] = (self.pivot_data[selected_element] - blank_adjust) * scale
-                self.logger.debug(f"Applied correction: blank_adjust={blank_adjust}, scale={scale}")
-                QMessageBox.information(self, "Success", f"Correction applied: blank_adjust={blank_adjust:.3f}, scale={scale:.3f}. In-range: {int(in_range_after)}/{total_crm}")
-            else:
-                self.logger.info("No improvement; skipping correction")
-                QMessageBox.information(self, "Info", "Data already optimal or no improvement possible.")
-
-            self.update_pivot_display()
-            if self.current_plot_dialog and self.current_plot_dialog.isVisible():
-                self.current_plot_dialog.update_plot()
-
-        except Exception as e:
-            self.logger.error(f"Failed to correct Pivot CRM: {str(e)}")
-            QMessageBox.warning(self, "Error", f"Failed to correct Pivot CRM: {str(e)}")
