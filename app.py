@@ -54,6 +54,13 @@ class MainWindow(QMainWindow):
             "Find similarity": {
                 "display": self.compare_tab
             },
+            "Process": {
+                "Weight Check": self.weight_check,
+                "Volume Check": self.volume_check,
+                "DF check": self.df_check,
+                "RM check": self.rm_check,
+                "Result": self.results
+            },
             "Elements": {
                 "Display": self.elements_tab,
             },
@@ -62,13 +69,6 @@ class MainWindow(QMainWindow):
             },
             "CRM": {
                 "CRM": self.crm_tab,
-            },
-            "Process": {
-                "Weight Check": self.weight_check,
-                "Volume Check": self.volume_check,
-                "DF check": self.df_check,
-                "RM check": self.rm_check,
-                "Result": self.results
             }
         }
         

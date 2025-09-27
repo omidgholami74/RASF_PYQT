@@ -238,7 +238,7 @@ def load_excel(app):
         # Switch to Calibration tab
         if hasattr(app, 'main_content'):
             logger.debug("Switching to Elements tab")
-            app.main_content.switch_tab("Elements")
+            app.main_content.switch_tab("Process")
         
         logger.info("File loaded successfully")
         QMessageBox.information(app, "Success", "File loaded successfully!")
