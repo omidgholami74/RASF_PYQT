@@ -4,7 +4,7 @@ import sqlite3
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, QTableView,
     QFrame, QScrollArea, QGridLayout, QDialog, QMessageBox, QHeaderView,
-    QLineEdit, QAbstractItemView
+    QLineEdit, QAbstractItemView, QCheckBox
 )
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex
 from PyQt6.QtGui import QFont
@@ -147,6 +147,7 @@ class CRMTab(QWidget):
         self.search_var = QLineEdit()
         self.filter_var = QComboBox()
         self.decimal_places = QComboBox()
+        self.our_oreas_checkbox = QCheckBox("Our OREAS")   # ✅ اضافه شد
         self.column_widths = {}
         self.sort_column = None
         self.sort_reverse = False
@@ -185,6 +186,10 @@ class CRMTab(QWidget):
         self.search_var.setFixedWidth(150)
         self.search_var.textChanged.connect(self.update_display)
         control_layout.addWidget(self.search_var)
+
+        # ✅ Our OREAS checkbox
+        self.our_oreas_checkbox.stateChanged.connect(self.update_display)
+        control_layout.addWidget(self.our_oreas_checkbox)
 
         # CRUD Buttons
         add_btn = QPushButton("Add Record")
@@ -300,9 +305,20 @@ class CRMTab(QWidget):
 
         try:
             cursor = self.conn.cursor()
-            query = "SELECT * FROM pivot_crm"
+
+            # ✅ اگر چک‌باکس Our OREAS فعال باشه، فقط رکوردهای جدول our_oreas رو نمایش بده
+            if self.our_oreas_checkbox.isChecked():
+                query = """
+                    SELECT p.*
+                    FROM pivot_crm p
+                    INNER JOIN our_oreas o ON p.[CRM ID] = o.name
+                """
+                params = []
+            else:
+                query = "SELECT * FROM pivot_crm"
+                params = []
+
             conditions = []
-            params = []
             search_text = self.search_var.text().lower()
             filter_method = self.filter_var.currentText()
 
@@ -327,7 +343,6 @@ class CRMTab(QWidget):
                 return
 
             self.pivot_data = df
-            df.to_csv('pivot_crm.csv')
             model = CRMTableModel(self, df, decimal_places=int(self.decimal_places.currentText()))
             self.table_view.setModel(model)
             self.table_view.frozenTableView.setModel(model)
