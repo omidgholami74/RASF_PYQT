@@ -1,5 +1,5 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QLineEdit, QPushButton, QTableView, QHeaderView, QMessageBox, QGroupBox
-from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QLineEdit, QPushButton, QTableView, QHeaderView, QGroupBox, QMessageBox, QProgressDialog
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QStandardItemModel, QStandardItem
 import pandas as pd
 import re
@@ -9,6 +9,35 @@ import logging
 # Setup logging
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+class DFCorrectionThread(QThread):
+    """Thread for applying DF corrections in the background."""
+    progress = pyqtSignal(int)
+    finished = pyqtSignal(str, int)
+    error = pyqtSignal(str)
+
+    def __init__(self, df, solution_labels, new_df, apply_to_all=False):
+        super().__init__()
+        self.df = df.copy()
+        self.solution_labels = solution_labels
+        self.new_df = new_df
+        self.apply_to_all = apply_to_all
+
+    def run(self):
+        try:
+            corrected_rows = 0
+            total_rows = len(self.solution_labels)
+            for i, solution_label in enumerate(self.solution_labels):
+                mask = (self.df['Solution Label'] == solution_label) & (self.df['Type'] == 'Samp')
+                matching_rows = self.df[mask]
+                if not matching_rows.empty:
+                    self.df.loc[mask, 'DF'] = self.new_df
+                    corrected_rows += len(matching_rows)
+                if self.apply_to_all:
+                    self.progress.emit(int((i + 1) / total_rows * 100))
+            self.finished.emit(self.df.to_json(), corrected_rows)
+        except Exception as e:
+            self.error.emit(str(e))
 
 class DFCheckFrame(QWidget):
     def __init__(self, app, parent=None):
@@ -95,6 +124,9 @@ class DFCheckFrame(QWidget):
                 background-color: #DBEAFE;
                 color: #1A3C34;
             }
+            QTableView::item {
+                padding: 0px;
+            }
         """)
 
         main_layout = QVBoxLayout(self)
@@ -146,6 +178,12 @@ class DFCheckFrame(QWidget):
         correction_button.setToolTip("Apply the new DF value to the selected sample")
         correction_button.clicked.connect(self.apply_df_correction)
         new_df_layout.addWidget(correction_button)
+
+        apply_all_button = QPushButton("Apply to All")
+        apply_all_button.setToolTip("Apply the new DF value to all non-excluded samples in the table")
+        apply_all_button.clicked.connect(self.apply_to_all)
+        new_df_layout.addWidget(apply_all_button)
+
         new_df_layout.addStretch()
         correction_layout.addWidget(new_df_frame)
 
@@ -207,7 +245,7 @@ class DFCheckFrame(QWidget):
 
         # Extract expected DF from Solution Label or use input
         def get_expected_df(label):
-            match = re.search(r'D(\d+)', label)
+            match = re.search(r'D(\d+)(?:-|\b|$)', label)
             return int(match.group(1)) if match else self.df_value
 
         data_filter_start = time.time()
@@ -237,15 +275,16 @@ class DFCheckFrame(QWidget):
                 solution_label = row['Solution Label']
                 actual_df = row['DF']
 
-                # Checkbox for exclusion
+                # Checkbox for exclusion using PyQt6 native checkbox
                 exclude_item = QStandardItem()
                 exclude_item.setCheckable(True)
                 exclude_item.setCheckState(Qt.CheckState.Checked if solution_label in excluded_dfs else Qt.CheckState.Unchecked)
-                exclude_item.setText("☑" if solution_label in excluded_dfs else "☐")
                 exclude_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
                 label_item = QStandardItem(str(solution_label))
+                label_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft)
                 df_item = QStandardItem(f"{actual_df:.3f}")
+                df_item.setTextAlignment(Qt.AlignmentFlag.AlignRight)
 
                 model.appendRow([exclude_item, label_item, df_item])
                 self.correction_df[solution_label] = self.new_df_entry
@@ -255,10 +294,11 @@ class DFCheckFrame(QWidget):
 
         self.correction_table.setModel(model)
         self.correction_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        self.correction_table.setColumnWidth(0, 80)
+        self.correction_table.setColumnWidth(0, 50)  # Reduced width for checkbox
         self.correction_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.correction_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self.correction_table.setColumnWidth(2, 100)
+        self.correction_table.setColumnWidth(2, 80)  # Reduced width for DF
+        self.correction_table.setStyleSheet("QTableView { padding: 0; }")  # Remove extra padding
 
         logger.debug(f"Updating correction table took {time.time() - start_time:.3f} seconds")
 
@@ -269,7 +309,6 @@ class DFCheckFrame(QWidget):
             model = self.correction_table.model()
             solution_label = model.data(model.index(item.row(), 1))
             new_state = item.checkState()
-            item.setText("☑" if new_state == Qt.CheckState.Checked else "☐")
             if new_state == Qt.CheckState.Checked:
                 self.app.add_excluded_df(solution_label)
             else:
@@ -278,7 +317,7 @@ class DFCheckFrame(QWidget):
             logger.debug(f"Toggle exclude for {solution_label} took {time.time() - start_time:.3f} seconds")
 
     def apply_df_correction(self):
-        """Apply DF correction to the selected solution label."""
+        """Apply DF correction to the selected solution label using a thread."""
         start_time = time.time()
         if not self.selected_solution_label:
             QMessageBox.warning(self, "Warning", "No solution label selected!")
@@ -298,19 +337,120 @@ class DFCheckFrame(QWidget):
             logger.debug(f"Data loading in apply_df_correction took {time.time() - data_start:.3f} seconds")
 
         df = self.df_cache
-        mask = (df['Solution Label'] == self.selected_solution_label) & (df['Type'] == 'Samp')
-        matching_rows = df[mask]
-        if matching_rows.empty:
-            QMessageBox.warning(self, "Warning", f"No matching rows found for {self.selected_solution_label}")
+        if df is None or df.empty:
+            QMessageBox.warning(self, "Warning", "No data loaded!")
             return
 
-        correction_start = time.time()
-        df.loc[mask, 'DF'] = self.new_df
+        # Check if the selected row is excluded
+        model = self.correction_table.model()
+        for row in range(model.rowCount()):
+            if model.data(model.index(row, 1)) == self.selected_solution_label:
+                if model.item(row, 0).checkState() == Qt.CheckState.Checked:
+                    QMessageBox.warning(self, "Warning", f"{self.selected_solution_label} is excluded and cannot be corrected!")
+                    return
+                break
 
-        self.app.set_data(df)
+        # Start thread
+        self.thread = DFCorrectionThread(df, [self.selected_solution_label], self.new_df, apply_to_all=False)
+        self.progress_dialog = QProgressDialog("Applying DF correction...", "Cancel", 0, 100, self)
+        self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self.progress_dialog.setAutoClose(True)
+        self.progress_dialog.canceled.connect(self.thread.terminate)
+        self.thread.progress.connect(self.progress_dialog.setValue)
+        self.thread.finished.connect(self.on_correction_finished)
+        self.thread.error.connect(self.on_correction_error)
+        self.thread.start()
+
+        logger.debug(f"Starting apply_df_correction took {time.time() - start_time:.3f} seconds")
+
+    def apply_to_all(self):
+        """Apply the new DF to all non-excluded samples in the bad DFs table using a thread."""
+        start_time = time.time()
+        if self.bad_dfs is None or self.bad_dfs.empty:
+            QMessageBox.warning(self, "Warning", "No bad DFs to correct!")
+            return
+
+        try:
+            self.new_df = float(self.new_df_entry.text())
+            if self.new_df <= 0:
+                raise ValueError("DF must be positive")
+        except ValueError as e:
+            QMessageBox.warning(self, "Warning", f"Invalid DF: {e}")
+            return
+
+        if self.df_cache is None:
+            data_start = time.time()
+            self.df_cache = self.app.get_data()
+            logger.debug(f"Data loading in apply_to_all took {time.time() - data_start:.3f} seconds")
+
+        df = self.df_cache
+        if df is None or df.empty:
+            QMessageBox.warning(self, "Warning", "No data loaded!")
+            return
+
+        # Filter out excluded samples
+        model = self.correction_table.model()
+        non_excluded_labels = []
+        for row in range(model.rowCount()):
+            if model.item(row, 0).checkState() != Qt.CheckState.Checked:
+                non_excluded_labels.append(model.data(model.index(row, 1)))
+
+        if not non_excluded_labels:
+            QMessageBox.warning(self, "Warning", "All samples are excluded!")
+            return
+
+        # Start thread
+        self.thread = DFCorrectionThread(df, non_excluded_labels, self.new_df, apply_to_all=True)
+        self.progress_dialog = QProgressDialog("Applying DF corrections to all samples...", "Cancel", 0, 100, self)
+        self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self.progress_dialog.setAutoClose(True)
+        self.progress_dialog.canceled.connect(self.thread.terminate)
+        self.thread.progress.connect(self.progress_dialog.setValue)
+        self.thread.finished.connect(self.on_correction_finished)
+        self.thread.error.connect(self.on_correction_error)
+        self.thread.start()
+
+        logger.debug(f"Starting apply_to_all took {time.time() - start_time:.3f} seconds")
+
+    def on_correction_finished(self, df_json, corrected_rows):
+        """Handle thread completion."""
+        self.df_cache = pd.read_json(df_json)
+        self.app.set_data(self.df_cache)
         self.app.notify_data_changed()
         self.bad_dfs = None
         self.check_df_values()
-        QMessageBox.information(self, "Success", f"Corrected {self.selected_solution_label} DF value for {len(matching_rows)} rows")
-        logger.debug(f"Apply DF correction took {time.time() - correction_start:.3f} seconds")
-        logger.debug(f"Total apply_df_correction took {time.time() - start_time:.3f} seconds")
+        QMessageBox.information(self, "Success", f"Corrected DF values for {corrected_rows} rows")
+        self.progress_dialog.close()
+
+    def on_correction_error(self, error_msg):
+        """Handle thread errors."""
+        QMessageBox.warning(self, "Error", f"Failed to apply corrections: {error_msg}")
+        self.progress_dialog.close()
+
+if __name__ == "__main__":
+    from PyQt6.QtWidgets import QApplication
+    import sys
+
+    class MockApp:
+        def get_data(self):
+            return pd.DataFrame({
+                'Solution Label': ['SampleD10001319-4', 'SampleD5'],
+                'Type': ['Samp', 'Samp'],
+                'DF': [1.0, 3.0]
+            })
+        def get_excluded_dfs(self):
+            return set()
+        def add_excluded_df(self, df):
+            pass
+        def remove_excluded_df(self, df):
+            pass
+        def set_data(self, df):
+            pass
+        def notify_data_changed(self):
+            pass
+
+    app = QApplication(sys.argv)
+    mock_app = MockApp()
+    window = DFCheckFrame(mock_app)
+    window.show()
+    sys.exit(app.exec())
